@@ -1,0 +1,92 @@
+{
+  "name": "vibe-coder",
+  "displayName": "vibe-coder",
+  "description": "Voice-first coding assistant powered by Deepgram",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "publisher": "test",
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "extensionDependencies": [],
+  "extensionPack": [],
+  "extensionKind": [
+    "workspace"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true
+    }
+  },
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vibe-coder.test",
+        "title": "Vibe Coder: Test Command"
+      },
+      {
+        "command": "vibe-coder.startAgent",
+        "title": "Vibe Coder: Start Voice Agent"
+      },
+      {
+        "command": "vibe-coder.startDictation",
+        "title": "Vibe Coder: Start Dictation"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "vibe-coder.startAgent",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "vibe-coder.startDictation",
+        "key": "ctrl+shift+d",
+        "mac": "cmd+shift+d"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.7",
+    "@types/node": "20.x",
+    "@types/readable-stream": "^4.0.18",
+    "@types/vscode": "^1.92.0",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^7.14.1",
+    "@typescript-eslint/parser": "^7.11.0",
+    "@vscode/test-cli": "^0.0.9",
+    "@vscode/test-electron": "^2.4.0",
+    "esbuild": "^0.21.5",
+    "eslint": "^8.57.0",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@deepgram/sdk": "^3.0.0",
+    "code": "^5.2.4",
+    "microphone-stream": "^6.0.1",
+    "ws": "^8.16.0",
+    "zod": "^3.22.4"
+  }
+}
