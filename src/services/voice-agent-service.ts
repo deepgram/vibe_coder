@@ -7,6 +7,7 @@ import Speaker from 'speaker'
 import { PromptManagementService } from './prompt-management-service'
 import { env, window, workspace } from 'vscode'
 import { LLMService } from './llm-service'
+import { EventEmitter } from 'events'
 
 interface AgentConfig {
   type: 'SettingsConfiguration'
@@ -34,12 +35,6 @@ interface AgentConfig {
       functions: Array<{
         name: string
         description: string
-        url: string
-        method: string
-        headers: Array<{
-          key: string
-          value: string
-        }>
         parameters: {
           type: string
           properties: {
@@ -59,10 +54,24 @@ interface AgentConfig {
 }
 
 interface AgentMessage {
-  type: string
+  type: 
+    | 'Welcome' 
+    | 'Ready'
+    | 'Speech'
+    | 'AgentResponse'
+    | 'FunctionCallRequest'
+    | 'FunctionCalling'
+    | 'ConversationText'
+    | 'UserStartedSpeaking'
+    | 'AgentStartedSpeaking'
+    | 'AgentAudioDone'
+    | 'Error'
+    | 'Close'
   session_id?: string
   text?: string
   is_final?: boolean
+  role?: 'assistant' | 'user'
+  content?: string
   audio?: {
     data: string
     encoding: string
@@ -71,33 +80,30 @@ interface AgentMessage {
     bitrate?: number
   }
   message?: string
+  function_name?: string
   function_call_id?: string
-  function?: {
-    name: string
-    arguments: string
-    url?: string
-    method?: string
-    headers?: Array<{
-      key: string
-      value: string
-    }>
-  }
+  input?: any
+  tts_latency?: number
+  ttt_latency?: number
+  total_latency?: number
 }
 
 export class VoiceAgentService {
-  private agentPanel: AgentPanel
-  private client!: ReturnType<typeof createClient>
   private ws: WebSocket | null = null
   private isInitialized = false
   private keepAliveInterval: NodeJS.Timeout | null = null
   private audioBuffers: Buffer[] = []
   private audioPlayer: AudioPlayer | null = null
-  private readonly AGENT_SAMPLE_RATE = 24000  // Agent's output sample rate
+  private readonly AGENT_SAMPLE_RATE = 24000
   private promptManager: PromptManagementService
   private llmService: LLMService
+  private eventEmitter = new EventEmitter()
 
-  constructor(private context: vscode.ExtensionContext) {
-    this.agentPanel = new AgentPanel(context)
+  constructor(
+    private context: vscode.ExtensionContext,
+    private updateStatus: (status: string) => void,
+    private updateTranscript: (text: string) => void
+  ) {
     this.promptManager = new PromptManagementService(context)
     this.llmService = new LLMService(context)
   }
@@ -113,7 +119,6 @@ export class VoiceAgentService {
       await this.context.secrets.store('deepgram.apiKey', key)
     }
 
-    this.client = createClient(apiKey || '')
     this.isInitialized = true
   }
 
@@ -122,8 +127,7 @@ export class VoiceAgentService {
       throw new Error('Voice Agent not initialized')
 
     try {
-      this.agentPanel.setListening(true)
-      this.agentPanel.updateStatus('Connecting to agent...')
+      this.updateStatus('Connecting to agent...')
 
       const apiKey = await this.context.secrets.get('deepgram.apiKey')
       if (!apiKey) throw new Error('Deepgram API key is required')
@@ -154,42 +158,43 @@ export class VoiceAgentService {
               console.log('Sending configuration:', JSON.stringify(config, null, 2))
               this.ws?.send(JSON.stringify(config))
               this.setupMicrophone()
-              this.agentPanel.updateStatus('Connected! Start speaking...')
+              this.updateStatus('Connected! Start speaking...')
               break
             case 'Ready':
               console.log('Agent ready to receive audio')
-              this.agentPanel.updateStatus('Ready! Start speaking...')
+              this.updateStatus('Ready! Start speaking...')
               break
             case 'Speech':
-              this.agentPanel.updateTranscript(message.text || '')
+              this.updateTranscript(message.text || '')
               break
             case 'AgentResponse':
-              this.agentPanel.updateTranscript(message.text || '')
+              this.updateTranscript(message.text || '')
               if (message.audio) {
                 this.playAudioResponse(message.audio)
               }
               break
-            case 'FunctionCall':
-              console.log('Function call requested:', message.function)
-              if (!message.function || !message.function_call_id) {
+            case 'FunctionCallRequest':
+              console.log('Function call requested:', message)
+              if (!message.function_name || !message.function_call_id) {
                 console.error('Invalid function call message')
                 break
               }
               try {
                 const result = await this.handleFunctionCall(
-                  message.function_call_id, 
-                  message.function
+                  message.function_call_id,
+                  {
+                    name: message.function_name,
+                    arguments: JSON.stringify(message.input)
+                  }
                 )
-                // Send the response back to the agent
                 const response = {
                   type: 'FunctionCallResponse',
                   function_call_id: message.function_call_id,
-                  response: JSON.stringify(result)
+                  output: JSON.stringify(result)
                 }
                 this.ws?.send(JSON.stringify(response))
               } catch (error) {
                 console.error('Function call failed:', error)
-                // Send error response to agent
                 const errorResponse = {
                   type: 'FunctionCallResponse',
                   function_call_id: message.function_call_id,
@@ -198,10 +203,23 @@ export class VoiceAgentService {
                 this.ws?.send(JSON.stringify(errorResponse))
               }
               break
+            case 'FunctionCalling':
+              // Debug message from server about function calling workflow
+              console.log('Function calling debug:', message)
+              break
+            case 'ConversationText':
+              this.eventEmitter.emit('transcript', message.content || '')
+              break
+            case 'UserStartedSpeaking':
+            case 'AgentStartedSpeaking':
+            case 'AgentAudioDone':
+              // These are informational messages, we can log them
+              console.log(`Received ${message.type}`)
+              break
             case 'Error':
               console.error('Agent error:', message)
               vscode.window.showErrorMessage(`Agent error: ${message.message}`)
-              this.agentPanel.updateStatus('Error occurred')
+              this.updateStatus('Error occurred')
               break
             case 'Close':
               console.log('Agent requested close')
@@ -236,9 +254,7 @@ export class VoiceAgentService {
 
     } catch (error) {
       this.cleanup()
-      vscode.window.showErrorMessage(
-        `Failed to start agent: ${(error as Error).message}`
-      )
+      throw error
     }
   }
 
@@ -259,7 +275,7 @@ export class VoiceAgentService {
   }
 
   private async playAudioResponse(audio: { data: string, encoding: string, sample_rate: number }) {
-    this.agentPanel.playAudio(audio)
+    this.updateTranscript(audio.data)
   }
 
   private setupKeepAlive() {
@@ -271,7 +287,7 @@ export class VoiceAgentService {
     }, 30000)
   }
 
-  private cleanup() {
+  public cleanup(): void {
     if (this.keepAliveInterval) {
       clearInterval(this.keepAliveInterval)
       this.keepAliveInterval = null
@@ -280,8 +296,7 @@ export class VoiceAgentService {
       this.ws.close()
       this.ws = null
     }
-    this.agentPanel.setListening(false)
-    this.agentPanel.updateStatus('Disconnected')
+    this.updateStatus('Disconnected')
     if (this.audioPlayer) {
       this.audioPlayer.stop()
       this.audioPlayer = null
@@ -334,25 +349,51 @@ export class VoiceAgentService {
 
     if (func.name === 'process_dictation') {
       const args = JSON.parse(func.arguments)
-      const prompt = args.promptId 
-        ? this.promptManager.getPromptById(args.promptId)
-        : this.promptManager.getPromptById('default-code')
-
-      if (!prompt) throw new Error('Prompt not found')
-
-      const result = await this.llmService.processText({ 
-        text: args.text,
-        prompt 
-      })
+      let prompt
       
-      if (result.error) {
-        window.showWarningMessage(result.error)
-        await env.clipboard.writeText(args.text)
-        return { success: false, error: result.error }
-      }
+      try {
+        // First try to get the specified prompt
+        if (args.promptId) {
+          prompt = this.promptManager.getPromptById(args.promptId)
+        }
+        
+        // If no promptId specified or prompt not found, use default
+        if (!prompt) {
+          prompt = {
+            id: 'default',
+            name: 'Default',
+            prompt: `You are providing prompts to Cursor, an AI-powered coding assistant.
 
-      await env.clipboard.writeText(result.text)
-      return { success: true, text: result.text }
+You are given a natural language description of what the user wants to do.
+
+You need to take that description and provide a detailed prompt that will help Cursor understand the user's intent and write the code to accomplish the task. 
+
+You should anticipate that Cursor may hallucinate, so you should provide a detailed prompt that breaks the users request into smaller, more manageable steps.`
+          }
+        }
+
+        const result = await this.llmService.processText({ 
+          text: args.text,
+          prompt 
+        })
+        
+        if (result.error) {
+          window.showErrorMessage(result.error)
+          await env.clipboard.writeText(args.text)
+          this.updateTranscript(`Error: ${result.error}\nFalling back to original text:\n${args.text}`)
+          return { success: false, error: result.error }
+        }
+
+        await env.clipboard.writeText(result.text)
+        this.updateTranscript(result.text)
+        return { success: true, text: result.text }
+      } catch (error) {
+        console.error('Error processing dictation:', error)
+        return { 
+          success: false, 
+          error: `Failed to process dictation: ${(error as Error).message}` 
+        }
+      }
     }
 
     throw new Error(`Unknown function: ${func.name}`)
@@ -387,13 +428,10 @@ export class VoiceAgentService {
             type: 'open_ai'
           },
           model: 'gpt-4o-mini',
-          instructions: 'You are a coding assistant. Help users write, modify, and understand code. When you detect that the user is dictating content (rather than asking a question or giving a command), use the process_dictation function.',
+          instructions: 'You are a coding mentor. You help users think through their product, code, and documentation. You help them brainstorm their applications, and provide helpful feedback and ideas, and can occasionally gently question their suppositions. You encourage best practices. You also have a tool that can create prompts for Cursor based on user input. Use that whenever the user makes statements about what the code should do, as the user will then paste the tool result into Cursor directly.',
           functions: [{
             name: 'process_dictation',
             description: 'Process user speech as formatted text using context-aware prompts. Use this when the user is dictating content that needs to be formatted.',
-            url: 'local://process_dictation',
-            method: 'post',
-            headers: [],
             parameters: {
               type: 'object',
               properties: {
@@ -419,7 +457,11 @@ export class VoiceAgentService {
 
   dispose(): void {
     this.cleanup()
-    this.agentPanel.dispose()
+  }
+
+  onTranscript(callback: (text: string) => void) {
+    this.eventEmitter.on('transcript', callback)
+    return () => this.eventEmitter.off('transcript', callback)
   }
 }
 

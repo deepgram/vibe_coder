@@ -119,6 +119,30 @@ export class AgentPanel {
               line-height: 1.2;
               color: var(--vscode-textLink-foreground);
             }
+
+            .processed-text {
+              margin-top: 20px;
+              padding: 15px;
+              background: var(--vscode-input-background);
+              border: 1px solid var(--vscode-input-border);
+              border-radius: 4px;
+              width: 90%;
+              min-height: 100px;
+              font-family: var(--vscode-editor-font-family);
+              white-space: pre-wrap;
+            }
+
+            .success-message {
+              color: #4CAF50;
+              margin-top: 10px;
+              font-weight: 500;
+              opacity: 0;
+              transition: opacity 0.3s ease;
+            }
+
+            .success-message.visible {
+              opacity: 1;
+            }
           </style>
         </head>
         <body>
@@ -137,6 +161,8 @@ export class AgentPanel {
           </div>
           <div class="status">Ready</div>
           <div class="transcript"></div>
+          <div class="success-message"></div>
+          <div class="processed-text"></div>
 
           <audio id="agentAudio" style="display: none;"></audio>
 
@@ -183,6 +209,17 @@ export class AgentPanel {
                   const url = URL.createObjectURL(blob);
                   audio.src = url;
                   audio.play();
+                  break;
+                case 'updateProcessedText':
+                  document.querySelector('.processed-text').textContent = message.text;
+                  break;
+                case 'showSuccess':
+                  const successEl = document.querySelector('.success-message');
+                  successEl.textContent = message.text;
+                  successEl.classList.add('visible');
+                  setTimeout(() => {
+                    successEl.classList.remove('visible');
+                  }, 3000);
                   break;
               }
             });
@@ -280,6 +317,19 @@ export class AgentPanel {
         audio: audio.data,  // Already base64 encoded WAV
         encoding: audio.encoding,
         sampleRate: audio.sample_rate
+      })
+    }
+  }
+
+  updateProcessedText(text: string) {
+    if (this.panel) {
+      this.panel.webview.postMessage({ 
+        type: 'updateProcessedText',
+        text 
+      })
+      this.panel.webview.postMessage({ 
+        type: 'showSuccess',
+        text: 'Copied to clipboard! ✨' 
       })
     }
   }

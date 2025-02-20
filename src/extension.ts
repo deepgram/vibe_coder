@@ -13,29 +13,22 @@ console.log('Loading Vibe Coder extension...');
 import * as vscode from 'vscode';
 import { DeepgramService } from './services/deepgram-service'
 import { VoiceAgentService } from './services/voice-agent-service'
+import { ModeManagerService } from './services/mode-manager-service'
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export async function activate(context: vscode.ExtensionContext) {
 	console.log('Activating Vibe Coder extension...')
 	
-	const deepgramService = new DeepgramService(context)
-	const voiceAgentService = new VoiceAgentService(context)
+	const modeManager = new ModeManagerService(context)
 	
 	try {
-		console.log('Initializing Deepgram service...')
-		await deepgramService.initialize()
-		console.log('Deepgram service initialized successfully')
+		console.log('Initializing mode manager...')
+		await modeManager.initialize()
+		console.log('Mode manager initialized successfully')
 	} catch (error) {
-		console.error('Failed to initialize Deepgram service:', error)
+		console.error('Failed to initialize services:', error)
 		vscode.window.showErrorMessage('Failed to initialize Vibe Coder: ' + (error as Error).message)
-		return
-	}
-
-	try {
-		await voiceAgentService.initialize()
-	} catch (error) {
-		console.error('Failed to initialize voice agent:', error)
 		return
 	}
 
@@ -47,35 +40,31 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Now provide the implementation of the command with registerCommand
 	// The commandId parameter must match the command field in package.json
 	context.subscriptions.push(
-		vscode.commands.registerCommand('vibe-coder.startAgent', async () => {
-			console.log('Starting agent...')
+		vscode.commands.registerCommand('vibe-coder.openPanel', async () => {
 			try {
-				await voiceAgentService.startAgent()
+				console.log('Opening panel...')
+				modeManager.show()
 			} catch (error) {
-				console.error('Failed to start voice agent:', error)
-				vscode.window.showErrorMessage(
-					`Failed to start voice agent: ${(error as Error).message}`
-				)
+				console.error('Failed to open panel:', error)
+				vscode.window.showErrorMessage('Failed to open panel: ' + (error as Error).message)
 			}
+		}),
+
+		vscode.commands.registerCommand('vibe-coder.startAgent', async () => {
+			modeManager.show()
+			await modeManager.setMode('vibe')
 		}),
 
 		vscode.commands.registerCommand('vibe-coder.startDictation', async () => {
-			console.log('Starting dictation...')
 			try {
-				await deepgramService.startDictation()
+				modeManager.show()
+				if (modeManager.currentMode !== 'code') {
+					await modeManager.setMode('code')
+				}
+				await modeManager.toggleDictation()
 			} catch (error) {
-				console.error('Failed to start dictation:', error)
-				vscode.window.showErrorMessage('Failed to start dictation: ' + (error as Error).message)
-			}
-		}),
-
-		vscode.commands.registerCommand('vibe-coder.stopDictation', async () => {
-			console.log('Stopping dictation...')
-			try {
-				await deepgramService.stopDictation()
-			} catch (error) {
-				console.error('Failed to stop dictation:', error)
-				vscode.window.showErrorMessage('Failed to stop dictation: ' + (error as Error).message)
+				console.error('Failed to toggle dictation:', error)
+				vscode.window.showErrorMessage('Failed to toggle dictation: ' + (error as Error).message)
 			}
 		}),
 
@@ -88,8 +77,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Add service to subscriptions for cleanup
 	context.subscriptions.push({ 
 		dispose: () => {
-			deepgramService.dispose()
-			voiceAgentService.dispose()
+			modeManager.dispose()
 		} 
 	})
 

@@ -85,6 +85,10 @@ export class LLMService implements ILLMService {
 
       return { text: result }
     } catch (error) {
+      if ((error as Error).message.includes('API key')) {
+        // If API key error, clear the stored key so it will be requested again
+        await this.context.secrets.delete('openai.apiKey')
+      }
       return { 
         text: text,
         error: `Failed to process text: ${(error as Error).message}`
@@ -97,7 +101,14 @@ export class LLMService implements ILLMService {
     if (!apiKey) {
       const key = await vscode.window.showInputBox({
         prompt: 'Enter your OpenAI API key',
-        password: true
+        password: true,
+        placeHolder: 'sk-...',
+        ignoreFocusOut: true, // Keep the input box open when focus is lost
+        validateInput: (value) => {
+          if (!value) return 'API key is required'
+          if (!value.startsWith('sk-')) return 'Invalid API key format'
+          return null
+        }
       })
       if (!key) throw new Error('OpenAI API key is required')
       await this.context.secrets.store('openai.apiKey', key)

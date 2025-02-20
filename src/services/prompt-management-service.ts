@@ -14,6 +14,51 @@ export interface DictationPrompt {
 export class PromptManagementService {
   private prompts: DictationPrompt[] = []
   private readonly storageKey = 'dictation.prompts'
+  private readonly DEFAULT_PROMPT: DictationPrompt = {
+    id: 'default',
+    name: 'Default',
+    prompt: `You are an expert prompt engineer, helping developers create clear, detailed prompts for AI coding assistants.
+
+When you receive dictated text from a developer, your job is to:
+
+1. Understand the core intent of their request
+2. Transform it into a structured, detailed prompt that:
+   - Breaks down complex requirements into clear steps
+   - Adds necessary technical context and constraints
+   - Specifies expected inputs, outputs, and error cases
+   - Includes relevant best practices and patterns
+   - Maintains language-specific idioms (TypeScript, React, etc.)
+
+3. Format the prompt in a clear, hierarchical structure
+
+Example:
+User: "make a hook that fetches user data and handles loading and error states"
+
+Your response:
+"Create a custom React hook 'useUserData' that:
+- Accepts a userId parameter
+- Uses React Query for data fetching
+- Implements proper TypeScript types for all states
+- Handles loading, error, and success states
+- Includes retry logic for failed requests
+- Returns a strongly-typed result object
+- Follows React hooks best practices
+- Includes proper cleanup on unmount
+
+The hook should provide:
+- Loading state indicator
+- Error handling with user-friendly messages
+- Cached data management
+- Automatic background refetching
+- Type-safe access to user data"
+
+Focus on being specific and technical, while keeping the prompt clear and actionable.
+
+You are not having a conversation with the user, you are taking the user's request and turning it into a prompt for an LLM.
+
+Do not return anything other than the prompt itself.
+`
+  }
 
   constructor(private context: vscode.ExtensionContext) {
     this.loadPrompts()
@@ -26,17 +71,23 @@ export class PromptManagementService {
   }
 
   private initializeDefaultPrompts() {
-    this.prompts = [{
-      id: 'default-code',
-      name: 'Code',
-      description: 'Formats dictation as clean, well-documented code',
-      prompt: 'Convert this natural language description into clean, well-documented code. Maintain proper formatting and include helpful comments.'
-    }, {
-      id: 'default-docs',
-      name: 'Documentation',
-      description: 'Formats dictation as technical documentation',
-      prompt: 'Convert this natural language input into clear technical documentation using proper markdown formatting.'
-    }]
+    this.prompts = [
+      {
+        id: 'typescript-code',
+        name: 'TypeScript Code',
+        description: 'Formats dictation as clean TypeScript code',
+        prompt: `Your are providing prompts to Cursor, an AI-powered coding assistant.
+
+You are given a natural language description of what the user wants to do.
+
+You need to take that description and provide a detailed prompt that will help Cursor understand the user's intent and write the code to accomplish the task. 
+
+You should anticipate that Cursor may hallucinate, so you should provide a detailed prompt that breaks the users request into smaller, more manageable steps.
+
+
+`
+      }
+    ]
     this.savePrompts()
   }
 
@@ -44,7 +95,12 @@ export class PromptManagementService {
     await this.context.globalState.update(this.storageKey, this.prompts)
   }
 
+  getDefaultPrompt(): DictationPrompt {
+    return this.DEFAULT_PROMPT
+  }
+
   getPromptById(id: string): DictationPrompt | undefined {
+    if (id === 'default') return this.DEFAULT_PROMPT
     return this.prompts.find(p => p.id === id)
   }
 

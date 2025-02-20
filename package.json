@@ -39,11 +39,11 @@
       },
       {
         "command": "vibe-coder.startDictation",
-        "title": "Vibe Coder: Start Dictation"
+        "title": "Vibe Coder: Toggle Dictation"
       },
       {
-        "command": "vibe-coder.stopDictation",
-        "title": "Vibe Coder: Stop Dictation"
+        "command": "vibe-coder.openPanel",
+        "title": "Vibe Coder: Open Panel"
       }
     ],
     "keybindings": [
@@ -55,12 +55,24 @@
       {
         "command": "vibe-coder.startDictation",
         "key": "ctrl+shift+d",
-        "mac": "cmd+shift+d"
+        "mac": "cmd+shift+d",
+        "when": "!inDebugRepl"
       },
       {
-        "command": "vibe-coder.stopDictation",
-        "key": "ctrl+shift+s",
-        "mac": "cmd+shift+s"
+        "command": "vibe-coder.openPanel",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v"
+      },
+      {
+        "command": "vibe-coder.startPTT",
+        "key": "alt",
+        "mac": "alt"
+      },
+      {
+        "command": "vibe-coder.endPTT",
+        "key": "alt",
+        "mac": "alt",
+        "when": "!altKey"
       }
     ]
   },
@@ -98,6 +110,7 @@
     "code": "^5.2.4",
     "node-microphone": "^0.1.6",
     "speaker": "^0.5.5",
+    "speex-resampler": "^3.0.1",
     "ws": "^8.16.0",
     "zod": "^3.22.4"
   }

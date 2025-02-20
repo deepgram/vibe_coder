@@ -7,6 +7,7 @@ import {
 import Microphone from 'node-microphone'
 import WebSocket from 'ws'
 import { FloatingPreview } from './floating-preview'
+import { EventEmitter } from 'events'
 
 /**
  * If you have extension-specific config, define it here.
@@ -23,14 +24,16 @@ interface DictationState {
 }
 
 export class DeepgramService {
-  // Use definite assignment (!) for client since we initialize in `initialize()`
   private client!: ReturnType<typeof createClient>
   private isInitialized = false
   private dictationService: DictationService | null = null
 
-  constructor(private context: vscode.ExtensionContext) {}
+  constructor(private context: vscode.ExtensionContext) {
+    console.log('DeepgramService constructor')
+  }
 
   async initialize(): Promise<void> {
+    console.log('DeepgramService initializing...')
     const apiKey = await this.context.secrets.get('deepgram.apiKey')
     if (!apiKey) {
       const key = await vscode.window.showInputBox({
@@ -44,6 +47,7 @@ export class DeepgramService {
     this.client = createClient(apiKey || '')
     this.dictationService = new DictationService(this.client, this.context)
     this.isInitialized = true
+    console.log('DeepgramService initialized successfully')
   }
 
   async startAgent(): Promise<void> {
@@ -70,11 +74,21 @@ export class DeepgramService {
   dispose(): void {
     this.dictationService?.stopDictation()
   }
+
+  onTranscript(callback: (text: string) => void) {
+    console.log('Setting up transcript listener')
+    if (!this.dictationService) {
+      console.error('Dictation service not initialized in onTranscript')
+      throw new Error('Dictation service not initialized')
+    }
+    return this.dictationService.onTranscript(callback)
+  }
 }
 
 class DictationService {
   private state: DictationState
   private preview: FloatingPreview
+  private eventEmitter = new EventEmitter()
 
   constructor(
     private deepgramClient: ReturnType<typeof createClient>,
@@ -117,14 +131,16 @@ class DictationService {
     if (this.state.isActive) {
       console.log('Dictation already active, stopping first...')
       await this.stopDictation()
-      return
+      console.log('Previous dictation stopped')
     }
 
     try {
       console.log('Creating microphone...')
       const mic = new Microphone()
+      console.log('Microphone instance created')
+      
       const audioStream = mic.startRecording()
-      console.log('Microphone started')
+      console.log('Microphone recording started')
 
       console.log('Creating Deepgram connection...')
       const connection = this.deepgramClient.listen.live({
@@ -135,60 +151,99 @@ class DictationService {
         encoding: 'linear16',
         sample_rate: 16000
       })
+      console.log('Deepgram connection created')
 
       connection.on(LiveTranscriptionEvents.Open, () => {
         console.log('Deepgram connection opened')
         this.state.isActive = true
         this.state.statusBarItem.text = '$(megaphone) Dictation: On'
-        vscode.window.showInformationMessage('Dictation started')
       })
 
-      connection.on(LiveTranscriptionEvents.Close, () => {
-        console.log('Deepgram connection closed')
-        this.stopDictation()
-      })
-
-      connection.on(LiveTranscriptionEvents.Transcript, (data: any) => {
-        const transcript = data?.channel?.alternatives?.[0]?.transcript || ''
-        if (transcript) {
-          this.preview.updateTranscription(transcript)
-        }
-      })
-
-      audioStream.on('data', (chunk: Buffer) => {
-        if (connection.isConnected()) {
-          console.log('Sending audio chunk of size:', chunk.length)
-          connection.send(chunk)
-        }
-      })
-
-      // Store references
+      // Store references before setting up other handlers
       this.state.mic = mic
       this.state.wsConnection = connection
-      console.log('Dictation setup complete')
+      console.log('References stored')
+
+      // Add error event handlers with more detail
+      connection.on(LiveTranscriptionEvents.Error, (error) => {
+        console.error('Deepgram connection error:', error)
+        console.error('Connection state:', {
+          isConnected: connection.isConnected(),
+          error: error
+        })
+      })
+
+      audioStream.on('error', (error: any) => {
+        console.error('Microphone stream error:', error)
+        console.error('Microphone state:', {
+          isActive: this.state.isActive,
+          hasStream: !!audioStream,
+          error: error
+        })
+      })
+
+      // Add data monitoring
+      audioStream.on('data', (chunk: Buffer) => {
+        console.log('Audio chunk received:', {
+          size: chunk.length,
+          isConnected: connection.isConnected(),
+          timestamp: new Date().toISOString()
+        })
+        if (connection.isConnected()) {
+          connection.send(chunk)
+        } else {
+          console.log('Connection not ready, chunk dropped')
+        }
+      })
+
+      // Also, we're missing the transcript handler! Add this back:
+      connection.on(LiveTranscriptionEvents.Transcript, (data: any) => {
+        console.log('Received transcript data:', data)
+        const transcript = data?.channel?.alternatives?.[0]?.transcript || ''
+        if (transcript) {
+          console.log('Processing transcript:', transcript)
+          this.handleTranscript(transcript)
+        }
+      })
+
+      console.log('All handlers set up successfully')
     } catch (error) {
       console.error('Error in startDictation:', error)
-      vscode.window.showErrorMessage(
-        `Failed to start dictation: ${(error as Error).message}`
-      )
-      await this.stopDictation()
+      if (error instanceof Error) {
+        console.error('Error details:', {
+          name: error.name,
+          message: error.message,
+          stack: error.stack
+        })
+      }
+      throw error
     }
   }
 
   async stopDictation(): Promise<void> {
+    console.log('stopDictation called, current state:', {
+      isActive: this.state.isActive,
+      hasMic: !!this.state.mic,
+      hasConnection: !!this.state.wsConnection
+    })
+
     if (this.state.mic) {
+      console.log('Stopping microphone recording...')
       this.state.mic.stopRecording()
       this.state.mic = null
+      console.log('Microphone stopped and cleared')
     }
 
     if (this.state.wsConnection) {
+      console.log('Disconnecting Deepgram...')
       this.state.wsConnection.disconnect()
       this.state.wsConnection = null
+      console.log('Deepgram disconnected and cleared')
     }
 
     this.state.isActive = false
     this.state.statusBarItem.text = '$(unmute) Dictation: Off'
-    vscode.window.showInformationMessage('Dictation stopped')
+    console.log('Dictation service state reset')
   }
 
   async insertText(text: string): Promise<void> {
@@ -199,5 +254,14 @@ class DictationService {
       const position = editor.selection.active
       editBuilder.insert(position, text + ' ')
     })
+  }
+
+  handleTranscript(transcript: string) {
+    this.eventEmitter.emit('transcript', transcript)
+  }
+
+  onTranscript(callback: (text: string) => void) {
+    this.eventEmitter.on('transcript', callback)
+    return () => this.eventEmitter.off('transcript', callback)
   }
 } 
