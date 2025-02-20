@@ -8,6 +8,8 @@ import { PromptManagementService } from './prompt-management-service'
 import { env, window, workspace } from 'vscode'
 import { LLMService } from './llm-service'
 import { EventEmitter } from 'events'
+import { CommandRegistryService } from './command-registry-service'
+import { WorkspaceService } from './workspace-service'
 
 interface AgentConfig {
   type: 'SettingsConfiguration'
@@ -36,11 +38,18 @@ interface AgentConfig {
         name: string
         description: string
         parameters: {
-          type: string
+          type: 'object'
           properties: {
-            [key: string]: {
+            name: {
               type: string
               description: string
+            }
+            args: {
+              type: 'array'
+              description: string
+              items: {
+                type: string
+              }
             }
           }
           required: string[]
@@ -98,6 +107,8 @@ export class VoiceAgentService {
   private promptManager: PromptManagementService
   private llmService: LLMService
   private eventEmitter = new EventEmitter()
+  private commandRegistry: CommandRegistryService
+  private workspaceService: WorkspaceService
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -106,6 +117,8 @@ export class VoiceAgentService {
   ) {
     this.promptManager = new PromptManagementService(context)
     this.llmService = new LLMService(context)
+    this.commandRegistry = new CommandRegistryService()
+    this.workspaceService = new WorkspaceService()
   }
 
   async initialize(): Promise<void> {
@@ -154,7 +167,7 @@ export class VoiceAgentService {
           switch (message.type) {
             case 'Welcome':
               console.log('Received Welcome, sending configuration...')
-              const config = this.getAgentConfig()
+              const config = await this.getAgentConfig()
               console.log('Sending configuration:', JSON.stringify(config, null, 2))
               this.ws?.send(JSON.stringify(config))
               this.setupMicrophone()
@@ -211,6 +224,9 @@ export class VoiceAgentService {
               this.eventEmitter.emit('transcript', message.content || '')
               break
             case 'UserStartedSpeaking':
+              console.log('User started speaking, stopping audio playback')
+              this.audioPlayer?.stop()
+              break
             case 'AgentStartedSpeaking':
             case 'AgentAudioDone':
               // These are informational messages, we can log them
@@ -347,6 +363,20 @@ export class VoiceAgentService {
       throw new Error('Agent not connected')
     }
 
+    if (func.name === 'execute_command') {
+      const args = JSON.parse(func.arguments)
+      try {
+        await this.commandRegistry.executeCommand(args.name, args.args)
+        return { success: true }
+      } catch (error) {
+        console.error('Command execution failed:', error)
+        return { 
+          success: false, 
+          error: (error as Error).message 
+        }
+      }
+    }
+
     if (func.name === 'process_dictation') {
       const args = JSON.parse(func.arguments)
       let prompt
@@ -405,7 +435,11 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
     this.audioPlayer?.play(data)
   }
 
-  private getAgentConfig(): AgentConfig {
+  private async getAgentConfig(): Promise<AgentConfig> {
+    const commands = this.commandRegistry.getCommandDefinitions()
+    const fileTree = await this.workspaceService.getFileTree()
+    const formattedTree = this.workspaceService.formatFileTree(fileTree)
+    
     return {
       type: 'SettingsConfiguration',
       audio: {
@@ -428,25 +462,37 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
             type: 'open_ai'
           },
           model: 'gpt-4o-mini',
-          instructions: 'You are a coding mentor. You help users think through their product, code, and documentation. You help them brainstorm their applications, and provide helpful feedback and ideas, and can occasionally gently question their suppositions. You encourage best practices. You also have a tool that can create prompts for Cursor based on user input. Use that whenever the user makes statements about what the code should do, as the user will then paste the tool result into Cursor directly.',
-          functions: [{
-            name: 'process_dictation',
-            description: 'Process user speech as formatted text using context-aware prompts. Use this when the user is dictating content that needs to be formatted.',
-            parameters: {
-              type: 'object',
-              properties: {
-                text: {
-                  type: 'string',
-                  description: 'The text to process from user speech'
+          instructions: `You are a coding mentor and VS Code assistant. You help users navigate and control VS Code through voice commands.
+          
+          Current Workspace Structure:
+          ${formattedTree}
+
+          When a user requests an action that matches a VS Code command, use the execute_command function.
+          You can help users navigate the file structure and open files using the paths shown above.
+          Provide helpful feedback about what you're doing and guide users if they need help.`,
+          functions: [
+            {
+              name: 'execute_command',
+              description: 'Execute a VS Code command',
+              parameters: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                    description: 'Name of the command to execute'
+                  },
+                  args: {
+                    type: 'array',
+                    description: 'Optional arguments for the command',
+                    items: {
+                      type: 'string'
+                    }
+                  }
                 },
-                promptId: {
-                  type: 'string',
-                  description: 'Optional ID of the prompt to use for formatting'
-                }
-              },
-              required: ['text']
+                required: ['name']
+              }
             }
-          }]
+          ]
         },
         speak: {
           model: 'aura-asteria-en'
@@ -470,12 +516,11 @@ class AudioPlayer {
   private speaker: SpeakerWrapper
   private bufferedAudio: Buffer[] = []
   private targetSpeakerAudioMs = 400
-  private refillInterval: NodeJS.Timeout
 
   constructor(sampleRate: number) {
     console.log('Initializing speaker with sample rate:', sampleRate)
     this.speaker = new SpeakerWrapper(sampleRate)
-    this.refillInterval = setInterval(() => this.refillSpeaker(), 200)
+    setInterval(() => this.refillSpeaker(), 200)
   }
 
   play(audio: Buffer) {
@@ -484,7 +529,6 @@ class AudioPlayer {
   }
 
   stop() {
-    clearInterval(this.refillInterval)
     this.bufferedAudio = []
   }
 

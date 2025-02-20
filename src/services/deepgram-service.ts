@@ -123,7 +123,7 @@ class DictationService {
         model: 'nova-2',
         smart_format: true,
         punctuate: true,
-        interim_results: false,
+        interim_results: true,
         encoding: 'linear16',
         sample_rate: 16000
       })

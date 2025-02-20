@@ -3,6 +3,7 @@ import { DeepgramService } from './deepgram-service'
 import { VoiceAgentService } from './voice-agent-service'
 import { LLMService } from './llm-service'
 import { PromptManagementService } from './prompt-management-service'
+import { CommandRegistryService } from './command-registry-service'
 
 export type Mode = 'vibe' | 'code'
 
@@ -16,6 +17,7 @@ export class ModeManagerService {
   private isInitialized = false
   private transcriptBuffer = ''
   private isDictationActive = false
+  private commandRegistry: CommandRegistryService
 
   constructor(private context: vscode.ExtensionContext) {
     console.log('ModeManagerService constructor')
@@ -50,6 +52,8 @@ export class ModeManagerService {
         await this.toggleDictation()
       })
     )
+
+    this.commandRegistry = new CommandRegistryService()
   }
 
   async initialize(): Promise<void> {
@@ -175,8 +179,8 @@ export class ModeManagerService {
             .mode-button.active {
               background: ${matrixDarkGreen};
               color: ${matrixGreen};
-              text-shadow: 0 0 8px ${matrixGreen};
-              box-shadow: 0 0 12px rgba(0, 255, 65, 0.2);
+              text-shadow: 0 0 8px ${matrixGreen}, 0 0 12px ${matrixGreen};
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3), inset 0 0 8px rgba(0, 255, 65, 0.2);
             }
             .mode-button:not(.active) {
               background: transparent;
@@ -247,6 +251,7 @@ export class ModeManagerService {
               gap: 20px;
               position: relative;
               overflow: hidden;
+              z-index: 1;
             }
 
             /* Transcription Section */
@@ -336,16 +341,6 @@ export class ModeManagerService {
             }
 
             /* Matrix Rain Background */
-            .matrix-background {
-              position: absolute;
-              top: 0;
-              left: 0;
-              right: 0;
-              bottom: 0;
-              pointer-events: none;
-              opacity: 0.1;
-            }
-
             @keyframes pulse {
               0% { opacity: 1; }
               50% { opacity: 0.3; }
@@ -444,15 +439,99 @@ export class ModeManagerService {
               font-family: 'Courier New', monospace;
               cursor: pointer;
               outline: none;
+              transition: all 0.3s ease;
+              box-shadow: 0 0 4px rgba(0, 255, 65, 0.1);
             }
 
             #prompt-select:hover {
-              box-shadow: 0 0 8px ${matrixGreen};
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3), inset 0 0 8px rgba(0, 255, 65, 0.1);
+              text-shadow: 0 0 8px ${matrixGreen};
             }
 
             #prompt-select option {
               background: ${matrixBlack};
               color: ${matrixGreen};
+            }
+
+            /* Enhanced glow effects */
+            .mode-button.active {
+              background: ${matrixDarkGreen};
+              color: ${matrixGreen};
+              text-shadow: 0 0 8px ${matrixGreen}, 0 0 12px ${matrixGreen};
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3), inset 0 0 8px rgba(0, 255, 65, 0.2);
+            }
+
+            .start-button {
+              transition: all 0.3s ease;
+              position: relative;
+              overflow: hidden;
+            }
+
+            .start-button:hover {
+              text-shadow: 0 0 8px ${matrixGreen}, 0 0 12px ${matrixGreen};
+              box-shadow: 0 0 16px rgba(0, 255, 65, 0.4), inset 0 0 8px rgba(0, 255, 65, 0.2);
+            }
+
+            .start-button:hover::after {
+              content: '';
+              position: absolute;
+              top: 0;
+              left: -100%;
+              width: 100%;
+              height: 100%;
+              background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(0, 255, 65, 0.2),
+                transparent
+              );
+              animation: button-shine 1.5s infinite;
+            }
+
+            @keyframes button-shine {
+              100% {
+                left: 200%;
+              }
+            }
+
+            /* NEW LAYOUT CLASSES */
+            .content-container {
+              width: 100%;
+              height: calc(100vh - 100px);
+              display: flex;
+              flex-direction: column;
+              position: relative;
+            }
+            .vibe-section {
+              height: 40%;
+              width: 100%;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              position: relative;
+              padding: 20px;
+              box-sizing: border-box;
+            }
+            .code-section {
+              height: 60%;
+              width: 100%;
+              position: relative;
+              padding: 20px;
+              box-sizing: border-box;
+              overflow-y: auto;
+            }
+            .section-overlay {
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              background: rgba(0, 0, 0, 0.5);
+              pointer-events: none;
+              opacity: 0;
+              transition: opacity 0.3s ease;
+              z-index: 1;
             }
           </style>
         </head>
@@ -464,8 +543,8 @@ export class ModeManagerService {
                     onclick="switchMode('code')">Code</button>
           </div>
 
-          <div id="content-area">
-            <div class="vibe-mode ${this.currentMode === 'vibe' ? 'active' : ''}">
+          <div class="content-container">
+            <div class="vibe-section">
               <div class="status">
                 <span class="codicon codicon-broadcast"></span>
                 <span id="vibe-status">Ready</span>
@@ -474,21 +553,18 @@ export class ModeManagerService {
                 <div class="orb"></div>
               </div>
               <div id="agent-transcript"></div>
+              <div class="section-overlay" id="vibe-overlay"></div>
             </div>
             
-            <div class="code-mode ${this.currentMode === 'code' ? 'active' : ''}">
-              <div class="matrix-background" id="matrix-rain"></div>
-              
+            <div class="code-section">
               <div class="prompt-selection">
                 <label for="prompt-select" class="container-label">Select Prompt:</label>
                 <select id="prompt-select"></select>
               </div>
-
               <div class="transcription-container">
                 <div class="container-label">LIVE TRANSCRIPTION</div>
                 <div id="transcript"></div>
               </div>
-
               <div class="processing-container">
                 <div class="status-display">
                   <span id="code-status-icon"></span>
@@ -496,16 +572,15 @@ export class ModeManagerService {
                 </div>
                 <div id="success-message" class="success-message">Copied to clipboard</div>
               </div>
-
               <div class="prompt-container">
                 <div class="container-label">COMPILED PROMPT</div>
                 <div id="prompt-output"></div>
               </div>
-
               <div class="controls">
                 <button id="dictation-toggle" onclick="toggleDictation()">Start Dictation</button>
                 <span class="hotkey-hint">[⌘⇧D]</span>
               </div>
+              <div class="section-overlay" id="code-overlay"></div>
             </div>
           </div>
 
@@ -540,6 +615,9 @@ export class ModeManagerService {
                       // Auto-scroll to bottom
                       promptEl.scrollTop = promptEl.scrollHeight;
                     }
+                  } else if (message.target === 'agent-transcript') {
+                    const agentEl = document.getElementById('agent-transcript');
+                    if (agentEl) agentEl.textContent = message.text;
                   }
                   break;
                 case 'updateStatus':
@@ -597,20 +675,6 @@ export class ModeManagerService {
                 div.classList.toggle('active', div.className.includes(mode));
               });
             }
-
-            // Add Matrix rain animation
-            function setupMatrixRain() {
-              const canvas = document.createElement('canvas');
-              canvas.id = 'matrix-canvas';
-              document.querySelector('.matrix-background').appendChild(canvas);
-              
-              // Matrix rain implementation coming in next pass...
-            }
-
-            // Initialize when document loads
-            document.addEventListener('DOMContentLoaded', () => {
-              setupMatrixRain();
-            });
 
             function populatePromptDropdown(prompts) {
               const select = document.getElementById('prompt-select')
