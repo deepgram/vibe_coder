@@ -10,7 +10,7 @@ export class ModeManagerService {
   public readonly deepgramService: DeepgramService
   public readonly voiceAgentService: VoiceAgentService
   private readonly llmService: LLMService
-  private readonly promptManager: PromptManagementService
+  public readonly promptManager: PromptManagementService
   public currentMode: Mode = 'code'
   private panel: vscode.WebviewPanel | undefined
   private isInitialized = false
@@ -106,6 +106,10 @@ export class ModeManagerService {
   }
 
   private getWebviewContent() {
+    const matrixGreen = '#00FF41'
+    const matrixDarkGreen = '#003B00'
+    const matrixBlack = '#0D0208'
+
     return `
       <!DOCTYPE html>
       <html>
@@ -119,27 +123,57 @@ export class ModeManagerService {
             }
             .mode-toggle {
               display: flex;
-              background: var(--vscode-input-background);
-              border-radius: 20px;
+              background: ${matrixBlack};
+              border: 1px solid ${matrixGreen};
+              border-radius: 24px;
               padding: 4px;
               margin-bottom: 20px;
               width: fit-content;
+              position: relative;
+              overflow: hidden;
             }
             .mode-button {
-              padding: 8px 16px;
-              border-radius: 16px;
+              padding: 8px 24px;
+              border-radius: 20px;
               border: none;
               cursor: pointer;
-              font-size: 13px;
-              transition: all 0.2s;
+              font-family: 'Courier New', monospace;
+              font-size: 14px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              position: relative;
+              transition: all 0.3s ease;
+              z-index: 1;
+              background: transparent;
+              color: ${matrixGreen};
             }
             .mode-button.active {
-              background: var(--vscode-button-background);
-              color: var(--vscode-button-foreground);
+              background: ${matrixDarkGreen};
+              color: ${matrixGreen};
+              text-shadow: 0 0 8px ${matrixGreen};
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.2);
             }
             .mode-button:not(.active) {
               background: transparent;
-              color: var(--vscode-foreground);
+              color: ${matrixGreen};
+              opacity: 0.7;
+            }
+            .mode-button:hover:not(.active) {
+              opacity: 1;
+              text-shadow: 0 0 8px ${matrixGreen};
+            }
+            .mode-button.active::before {
+              content: '';
+              position: absolute;
+              top: 0;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              background: ${matrixGreen};
+              opacity: 0.1;
+              filter: blur(8px);
+              border-radius: 20px;
+              z-index: -1;
             }
             #content-area {
               min-height: 300px;
@@ -176,6 +210,214 @@ export class ModeManagerService {
               margin-bottom: 12px;
               color: var(--vscode-descriptionForeground);
             }
+
+            /* Matrix Theme Styles */
+            .code-mode {
+              background: ${matrixBlack};
+              padding: 20px;
+              font-family: 'Courier New', monospace;
+              height: 100vh;
+              display: grid;
+              grid-template-rows: auto 60px 1fr;
+              gap: 20px;
+              position: relative;
+              overflow: hidden;
+            }
+
+            /* Transcription Section */
+            .transcription-container {
+              background: rgba(0, 59, 0, 0.3);
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              margin-top: 24px;
+              position: relative;
+              overflow: hidden;
+            }
+
+            .container-label {
+              position: absolute;
+              top: -24px;
+              left: 0;
+              color: ${matrixGreen};
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              padding: 4px 8px;
+              background: ${matrixBlack};
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              z-index: 10;
+            }
+
+            #transcript {
+              color: ${matrixGreen};
+              font-size: 14px;
+              line-height: 1.4;
+              text-shadow: 0 0 10px rgba(0, 255, 65, 0.4);
+              height: 100%;
+              overflow-y: auto;
+              margin: 0;
+              padding: 0;
+            }
+
+            /* Processing Section */
+            .processing-container {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              padding: 4px 0;
+              position: relative;
+              margin: 20px 0;
+            }
+
+            .status-display {
+              display: flex;
+              align-items: center;
+              gap: 10px;
+              color: ${matrixGreen};
+              border-bottom: 1px solid ${matrixDarkGreen};
+              width: 100%;
+              padding-bottom: 4px;
+              justify-content: center;
+            }
+
+            .success-message {
+              color: ${matrixGreen};
+              font-size: 12px;
+              opacity: 0;
+              transition: opacity 0.3s ease;
+              padding-top: 4px;
+              font-family: 'Courier New', monospace;
+            }
+
+            /* Prompt Output Section */
+            .prompt-container {
+              background: rgba(0, 59, 0, 0.2);
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              padding: 20px;
+              position: relative;
+              height: calc(100% - 40px);
+              margin-top: 40px;
+              overflow: hidden;
+            }
+
+            .container-label {
+              position: absolute;
+              top: -24px;
+              left: 0;
+              color: ${matrixGreen};
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              padding: 4px 8px;
+              background: ${matrixBlack};
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              z-index: 10;
+            }
+
+            #prompt-output {
+              color: ${matrixGreen};
+              font-size: 13px;
+              line-height: 1.5;
+              white-space: pre-wrap;
+              font-family: 'Courier New', monospace;
+              height: 100%;
+              overflow-y: auto;
+              padding-right: 10px;
+            }
+
+            /* Matrix Rain Background */
+            .matrix-background {
+              position: absolute;
+              top: 0;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              pointer-events: none;
+              opacity: 0.1;
+            }
+
+            @keyframes pulse {
+              0% { opacity: 1; }
+              50% { opacity: 0.3; }
+              100% { opacity: 1; }
+            }
+
+            /* Control Button Styling */
+            .controls {
+              position: absolute;
+              top: 10px;
+              right: 0;
+              z-index: 100;
+              display: flex;
+              align-items: center;
+              gap: 10px;
+            }
+
+            #dictation-toggle {
+              background: transparent;
+              border: 1px solid ${matrixGreen};
+              color: ${matrixGreen};
+              padding: 8px 16px;
+              cursor: pointer;
+              font-family: 'Courier New', monospace;
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              transition: all 0.3s ease;
+              outline: none;
+              border-radius: 4px;
+              position: relative;
+            }
+
+            .hotkey-hint {
+              color: ${matrixGreen};
+              opacity: 0.9;
+              font-size: 12px;
+              font-family: 'Courier New', monospace;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+            }
+
+            /* Add scrollbar styling */
+            .transcription-container, .prompt-container {
+              scrollbar-width: thin;
+              scrollbar-color: ${matrixGreen} ${matrixBlack};
+            }
+
+            .transcription-container::-webkit-scrollbar,
+            .prompt-container::-webkit-scrollbar {
+              width: 6px;
+            }
+
+            .transcription-container::-webkit-scrollbar-track,
+            .prompt-container::-webkit-scrollbar-track {
+              background: ${matrixBlack};
+            }
+
+            .transcription-container::-webkit-scrollbar-thumb,
+            .prompt-container::-webkit-scrollbar-thumb {
+              background-color: ${matrixGreen};
+              border-radius: 3px;
+            }
+
+            /* Add success message styling */
+            .success-message {
+              color: ${matrixGreen};
+              font-size: 12px;
+              opacity: 0;
+              transition: opacity 0.3s ease;
+              text-align: center;
+              margin-top: 4px;
+              font-family: 'Courier New', monospace;
+            }
+
+            .success-message.visible {
+              opacity: 0.8;
+            }
           </style>
         </head>
         <body>
@@ -199,16 +441,30 @@ export class ModeManagerService {
             </div>
             
             <div class="code-mode ${this.currentMode === 'code' ? 'active' : ''}">
-              <div class="status">
-                <span class="codicon codicon-record" id="code-status-icon"></span>
-                <span id="code-status">Ready</span>
+              <div class="matrix-background" id="matrix-rain"></div>
+              
+              <div class="transcription-container">
+                <div class="container-label">LIVE TRANSCRIPTION</div>
+                <div id="transcript"></div>
               </div>
+
+              <div class="processing-container">
+                <div class="status-display">
+                  <span id="code-status-icon"></span>
+                  <span id="code-status">Ready</span>
+                </div>
+                <div id="success-message" class="success-message">Copied to clipboard</div>
+              </div>
+
+              <div class="prompt-container">
+                <div class="container-label">COMPILED PROMPT</div>
+                <div id="prompt-output"></div>
+              </div>
+
               <div class="controls">
-                <button onclick="toggleDictation()" id="dictation-toggle">
-                  Start Dictation
-                </button>
+                <button id="dictation-toggle" onclick="toggleDictation()">Start Dictation</button>
+                <span class="hotkey-hint">[⌘⇧D]</span>
               </div>
-              <div id="transcript"></div>
             </div>
           </div>
 
@@ -229,12 +485,21 @@ export class ModeManagerService {
               const message = event.data;
               switch (message.type) {
                 case 'updateMode':
-                  currentMode = message.mode;  // Update tracked mode
+                  currentMode = message.mode;
                   updateModeUI(message.mode);
                   break;
                 case 'updateTranscript':
-                  const element = document.getElementById(message.target || 'transcript');
-                  if (element) element.textContent = message.text;
+                  if (message.target === 'transcript') {
+                    const transcriptEl = document.getElementById('transcript');
+                    if (transcriptEl) transcriptEl.textContent = message.text;
+                  } else if (message.target === 'prompt-output') {
+                    const promptEl = document.getElementById('prompt-output');
+                    if (promptEl) {
+                      promptEl.textContent = message.text;
+                      // Auto-scroll to bottom
+                      promptEl.scrollTop = promptEl.scrollHeight;
+                    }
+                  }
                   break;
                 case 'updateStatus':
                   const statusElement = document.getElementById(
@@ -242,14 +507,35 @@ export class ModeManagerService {
                   );
                   if (statusElement) {
                     statusElement.textContent = message.text;
-                    // Update icon and button state
                     if (message.target === 'code-status') {
                       const isRecording = message.text === 'Recording...';
-                      document.getElementById('code-status-icon').style.color = 
-                        isRecording ? 'var(--vscode-errorForeground)' : '';
-                      document.getElementById('dictation-toggle').textContent = 
-                        isRecording ? 'Stop Dictation' : 'Start Dictation';
+                      const toggleBtn = document.getElementById('dictation-toggle');
+                      const successMsg = document.getElementById('success-message');
+                      if (toggleBtn) {
+                        toggleBtn.textContent = isRecording ? 'Stop Dictation' : 'Start Dictation';
+                        toggleBtn.classList.toggle('recording', isRecording);
+                      }
+                      // Hide success message when recording starts
+                      if (isRecording && successMsg) {
+                        successMsg.classList.remove('visible');
+                      }
                     }
+                  }
+                  break;
+                case 'appendTranscript':
+                  if (message.target === 'prompt-output') {
+                    const promptEl = document.getElementById('prompt-output');
+                    if (promptEl) {
+                      promptEl.textContent += message.text;
+                      // Auto-scroll to bottom
+                      promptEl.scrollTop = promptEl.scrollHeight;
+                    }
+                  }
+                  break;
+                case 'showSuccess':
+                  const successMsg = document.getElementById('success-message');
+                  if (successMsg) {
+                    successMsg.classList.add('visible');
                   }
                   break;
               }
@@ -263,6 +549,20 @@ export class ModeManagerService {
                 div.classList.toggle('active', div.className.includes(mode));
               });
             }
+
+            // Add Matrix rain animation
+            function setupMatrixRain() {
+              const canvas = document.createElement('canvas');
+              canvas.id = 'matrix-canvas';
+              document.querySelector('.matrix-background').appendChild(canvas);
+              
+              // Matrix rain implementation coming in next pass...
+            }
+
+            // Initialize when document loads
+            document.addEventListener('DOMContentLoaded', () => {
+              setupMatrixRain();
+            });
           </script>
         </body>
       </html>
@@ -273,9 +573,13 @@ export class ModeManagerService {
     if (!this.panel) return
 
     this.panel.webview.onDidReceiveMessage(async message => {
+      console.log('Received message:', message)  // Add logging
       switch (message.type) {
         case 'switchMode':
           await this.setMode(message.mode as Mode)
+          break
+        case 'toggleDictation':
+          await this.toggleDictation()  // Add this case
           break
       }
     })
@@ -388,7 +692,6 @@ export class ModeManagerService {
     try {
       await this.deepgramService.stopDictation()
 
-      // Process the accumulated text
       if (this.transcriptBuffer.trim()) {
         this.panel?.webview.postMessage({ 
           type: 'updateStatus', 
@@ -396,19 +699,33 @@ export class ModeManagerService {
           target: 'code-status'
         })
 
-        const result = await this.llmService.processText({
-          text: this.transcriptBuffer,
-          prompt: this.promptManager.getDefaultPrompt()
+        // Clear previous prompt output
+        this.panel?.webview.postMessage({
+          type: 'updateTranscript',
+          text: '',
+          target: 'prompt-output'
         })
 
-        if (result.error) {
-          vscode.window.showErrorMessage(result.error)
+        // Stream the response
+        const streamResponse = await this.llmService.streamProcessText({
+          text: this.transcriptBuffer,
+          prompt: this.promptManager.getCurrentPrompt(),
+          onToken: (token: string) => {
+            this.panel?.webview.postMessage({
+              type: 'appendTranscript',
+              text: token,
+              target: 'prompt-output'
+            })
+          }
+        })
+
+        if (streamResponse.error) {
+          vscode.window.showErrorMessage(streamResponse.error)
         } else {
-          await vscode.env.clipboard.writeText(result.text)
-          this.panel?.webview.postMessage({ 
-            type: 'updateTranscript', 
-            text: result.text,
-            target: 'transcript'
+          await vscode.env.clipboard.writeText(streamResponse.text)
+          // Show success message
+          this.panel?.webview.postMessage({
+            type: 'showSuccess'
           })
         }
       }

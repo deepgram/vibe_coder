@@ -6,7 +6,6 @@ import {
 } from '@deepgram/sdk'
 import Microphone from 'node-microphone'
 import WebSocket from 'ws'
-import { FloatingPreview } from './floating-preview'
 import { EventEmitter } from 'events'
 
 /**
@@ -87,7 +86,6 @@ export class DeepgramService {
 
 class DictationService {
   private state: DictationState
-  private preview: FloatingPreview
   private eventEmitter = new EventEmitter()
 
   constructor(
@@ -102,28 +100,6 @@ class DictationService {
     }
     this.state.statusBarItem.text = '$(unmute) Dictation: Off'
     this.state.statusBarItem.show()
-    
-    this.preview = new FloatingPreview(context)
-    this.setupPreviewHandlers()
-  }
-
-  private setupPreviewHandlers() {
-    // Use the new public method instead of accessing panel directly
-    this.preview.onDidReceiveMessage(async message => {
-      switch (message.type) {
-        case 'insertRaw':
-          await this.insertText(message.text)
-          break
-        case 'convertToCode':
-          // TODO: Implement code conversion
-          vscode.window.showInformationMessage('Code conversion coming soon!')
-          break
-        case 'executeCommand':
-          // TODO: Implement command execution
-          vscode.window.showInformationMessage('Command execution coming soon!')
-          break
-      }
-    })
   }
 
   async startDictation(): Promise<void> {

@@ -15,6 +15,15 @@ import { DeepgramService } from './services/deepgram-service'
 import { VoiceAgentService } from './services/voice-agent-service'
 import { ModeManagerService } from './services/mode-manager-service'
 
+// Add type for QuickPick items
+interface PromptQuickPickItem extends vscode.QuickPickItem {
+	id: 'new' | 'select' | 'modify' | 'delete'
+}
+
+interface PromptSelectItem extends vscode.QuickPickItem {
+	id: string
+}
+
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export async function activate(context: vscode.ExtensionContext) {
@@ -71,6 +80,141 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('vibe-coder.test', () => {
 			console.log('Test command executed')
 			vscode.window.showInformationMessage('Vibe Coder test command works!')
+		}),
+
+		vscode.commands.registerCommand('vibe-coder.managePrompts', async () => {
+			const items: PromptQuickPickItem[] = [
+				{ label: '$(add) Create New Prompt', id: 'new' },
+				{ label: '$(list-selection) Select Active Prompt', id: 'select' },
+				{ label: '$(edit) Modify Prompt', id: 'modify' },
+				{ label: '$(trash) Delete Prompt', id: 'delete' }
+			]
+
+			const choice = await vscode.window.showQuickPick(items, {
+				placeHolder: 'Manage Dictation Prompts'
+			})
+
+			if (!choice) return
+
+			switch (choice.id) {
+				case 'new': {
+					const name = await vscode.window.showInputBox({
+						prompt: 'Enter a name for the new prompt'
+					})
+					if (!name) return
+
+					// Use proper InputBoxOptions type
+					const prompt = await vscode.window.showInputBox({
+						prompt: 'Enter the system prompt text',
+						value: '',
+						valueSelection: undefined,
+						ignoreFocusOut: true
+					})
+					if (!prompt) return
+
+					await modeManager.promptManager.addPrompt(name, prompt)
+					break
+				}
+
+				case 'select': {
+					const prompts = modeManager.promptManager.getAllPrompts()
+					const selected = await vscode.window.showQuickPick<PromptSelectItem>(
+						prompts.map(p => ({ label: p.name, id: p.id })),
+						{ placeHolder: 'Select prompt to use' }
+					)
+					if (selected) {
+						await modeManager.promptManager.setCurrentPrompt(selected.id)
+					}
+					break
+				}
+
+				case 'modify': {
+					const prompts = modeManager.promptManager.getAllPrompts()
+					const selected = await vscode.window.showQuickPick<PromptSelectItem>(
+						prompts.map(p => ({ label: p.name, id: p.id })),
+						{ placeHolder: 'Select prompt to modify' }
+					)
+					
+					if (selected) {
+						const prompt = prompts.find(p => p.id === selected.id)
+						if (prompt) {
+							// Create a temp file in the system temp directory
+							const tmpFile = vscode.Uri.file(
+								`${context.globalStorageUri.fsPath}/prompt-${prompt.id}.md`
+							)
+
+							// Ensure the directory exists
+							await vscode.workspace.fs.createDirectory(context.globalStorageUri)
+
+							// Write initial content
+							await vscode.workspace.fs.writeFile(tmpFile, Buffer.from(
+								`// Prompt: ${prompt.name}
+// ID: ${prompt.id}
+// Edit the prompt below and save to update
+// Lines starting with // are ignored
+
+${prompt.prompt}`
+							))
+
+							const doc = await vscode.workspace.openTextDocument(tmpFile)
+							const editor = await vscode.window.showTextDocument(doc, {
+								preview: false,
+								viewColumn: vscode.ViewColumn.Beside
+							})
+
+							// Add save handler
+							const disposable = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
+								if (savedDoc.uri.toString() === tmpFile.toString()) {
+									// Extract prompt content (ignore comment lines)
+									const content = savedDoc.getText()
+										.split('\n')
+										.filter(line => !line.trim().startsWith('//'))
+										.join('\n')
+										.trim()
+
+									// Update the prompt
+									await modeManager.promptManager.updatePrompt(prompt.id, {
+										...prompt,
+										prompt: content
+									})
+
+									vscode.window.showInformationMessage(`Prompt "${prompt.name}" updated successfully`)
+									
+									// Clean up
+									disposable.dispose()
+									await vscode.workspace.fs.delete(tmpFile)
+								}
+							})
+
+							// Also clean up if the editor is closed without saving
+							const closeDisposable = vscode.workspace.onDidCloseTextDocument(async (closedDoc) => {
+								if (closedDoc.uri.toString() === tmpFile.toString()) {
+									closeDisposable.dispose()
+									try {
+										await vscode.workspace.fs.delete(tmpFile)
+									} catch (e) {
+										// File might already be deleted, ignore
+									}
+								}
+							})
+						}
+					}
+					break
+				}
+
+				case 'delete': {
+					const prompts = modeManager.promptManager.getAllPrompts()
+						.filter(p => p.id !== 'default')
+					const selected = await vscode.window.showQuickPick<PromptSelectItem>(
+						prompts.map(p => ({ label: p.name, id: p.id })),
+						{ placeHolder: 'Select prompt to delete' }
+					)
+					if (selected) {
+						await modeManager.promptManager.deletePrompt(selected.id)
+					}
+					break
+				}
+			}
 		})
 	)
 

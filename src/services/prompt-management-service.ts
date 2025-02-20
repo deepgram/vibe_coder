@@ -14,6 +14,7 @@ export interface DictationPrompt {
 export class PromptManagementService {
   private prompts: DictationPrompt[] = []
   private readonly storageKey = 'dictation.prompts'
+  private readonly currentPromptKey = 'dictation.currentPrompt'
   private readonly DEFAULT_PROMPT: DictationPrompt = {
     id: 'default',
     name: 'Default',
@@ -60,8 +61,11 @@ Do not return anything other than the prompt itself.
 `
   }
 
+  private currentPromptId: string = 'default'
+
   constructor(private context: vscode.ExtensionContext) {
     this.loadPrompts()
+    this.currentPromptId = this.context.globalState.get(this.currentPromptKey, 'default')
   }
 
   private async loadPrompts() {
@@ -108,12 +112,15 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
     return [...this.prompts]
   }
 
-  async addPrompt(prompt: Omit<DictationPrompt, 'id'>): Promise<DictationPrompt> {
-    const id = `custom-${Date.now()}`
-    const newPrompt = { ...prompt, id }
-    this.prompts.push(newPrompt)
+  getCurrentPrompt(): DictationPrompt {
+    const currentPrompt = this.prompts.find(p => p.id === this.currentPromptId)
+    return currentPrompt || this.DEFAULT_PROMPT
+  }
+
+  async addPrompt(name: string, prompt: string): Promise<void> {
+    const id = Date.now().toString()
+    this.prompts.push({ id, name, prompt })
     await this.savePrompts()
-    return newPrompt
   }
 
   async updatePrompt(id: string, updates: Partial<DictationPrompt>): Promise<void> {
@@ -124,7 +131,18 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
   }
 
   async deletePrompt(id: string): Promise<void> {
+    if (id === 'default') return // Prevent deleting default prompt
     this.prompts = this.prompts.filter(p => p.id !== id)
+    if (this.currentPromptId === id) {
+      this.currentPromptId = 'default'
+    }
     await this.savePrompts()
+  }
+
+  async setCurrentPrompt(id: string): Promise<void> {
+    this.currentPromptId = id
+    await this.context.globalState.update(this.currentPromptKey, id)
+    const prompt = this.getCurrentPrompt()
+    vscode.window.showInformationMessage(`Active prompt set to: ${prompt.name}`)
   }
 } 

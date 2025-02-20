@@ -52,18 +52,100 @@ class OpenAIClient implements LLMClient {
   }
 }
 
-export class LLMService implements ILLMService {
-  private client: LLMClient
+// Add new streaming interfaces
+interface StreamProcessParams {
+  text: string
+  prompt: DictationPrompt
+  onToken: (token: string) => void
+}
 
-  constructor(
-    private context: vscode.ExtensionContext,
-    client?: LLMClient
-  ) {
-    this.client = client || new OpenAIClient({
-      apiKey: '',  // Will be updated before each request
+interface StreamResponse extends LLMResponse {
+  text: string
+  error?: string
+}
+
+export class LLMService implements ILLMService {
+  private client: OpenAIClient
+
+  constructor(private context: vscode.ExtensionContext) {
+    this.client = new OpenAIClient({
+      apiKey: '',
       model: 'gpt-4o',
-      baseUrl: 'https://api.openai.com'
+      baseUrl: 'https://api.openai.com/v1'
     })
+  }
+
+  // Add new streaming method
+  async streamProcessText(params: StreamProcessParams): Promise<StreamResponse> {
+    try {
+      const apiKey = await this.getApiKey()
+      this.client.updateApiKey(apiKey)
+
+      const messages = [
+        { role: 'system', content: params.prompt.prompt },
+        { role: 'user', content: params.text }
+      ]
+
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4-turbo-preview',
+          messages,
+          stream: true
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.statusText}`)
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('Failed to get response reader')
+
+      let fullText = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        // Parse the SSE data
+        const chunk = new TextDecoder().decode(value)
+        const lines = chunk.split('\n')
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6)
+            if (data === '[DONE]') continue
+
+            try {
+              const json = JSON.parse(data)
+              const token = json.choices[0]?.delta?.content || ''
+              if (token) {
+                fullText += token
+                params.onToken(token)
+              }
+            } catch (e) {
+              console.error('Failed to parse streaming response:', e)
+            }
+          }
+        }
+      }
+
+      return { text: fullText }
+    } catch (error) {
+      console.error('Stream processing error:', error)
+      if ((error as Error).message.includes('API key')) {
+        await this.context.secrets.delete('openai.apiKey')
+      }
+      return { 
+        text: '',
+        error: `Failed to process text: ${(error as Error).message}`
+      }
+    }
   }
 
   async processText({ text, prompt }: { 
