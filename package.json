@@ -4,8 +4,10 @@
   "description": "Voice-first coding assistant powered by Deepgram",
   "version": "0.0.1",
   "engines": {
-    "vscode": "^1.92.0"
+    "vscode": "^1.92.0",
+    "node": ">=16.0.0"
   },
+  "type": "commonjs",
   "publisher": "test",
   "categories": [
     "Other"
@@ -38,6 +40,10 @@
       {
         "command": "vibe-coder.startDictation",
         "title": "Vibe Coder: Start Dictation"
+      },
+      {
+        "command": "vibe-coder.stopDictation",
+        "title": "Vibe Coder: Stop Dictation"
       }
     ],
     "keybindings": [
@@ -50,6 +56,11 @@
         "command": "vibe-coder.startDictation",
         "key": "ctrl+shift+d",
         "mac": "cmd+shift+d"
+      },
+      {
+        "command": "vibe-coder.stopDictation",
+        "key": "ctrl+shift+s",
+        "mac": "cmd+shift+s"
       }
     ]
   },
@@ -85,7 +96,8 @@
   "dependencies": {
     "@deepgram/sdk": "^3.0.0",
     "code": "^5.2.4",
-    "microphone-stream": "^6.0.1",
+    "node-microphone": "^0.1.6",
+    "speaker": "^0.5.5",
     "ws": "^8.16.0",
     "zod": "^3.22.4"
   }

@@ -12,6 +12,7 @@ console.log('Loading Vibe Coder extension...');
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { DeepgramService } from './services/deepgram-service'
+import { VoiceAgentService } from './services/voice-agent-service'
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -19,6 +20,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	console.log('Activating Vibe Coder extension...')
 	
 	const deepgramService = new DeepgramService(context)
+	const voiceAgentService = new VoiceAgentService(context)
 	
 	try {
 		console.log('Initializing Deepgram service...')
@@ -27,6 +29,13 @@ export async function activate(context: vscode.ExtensionContext) {
 	} catch (error) {
 		console.error('Failed to initialize Deepgram service:', error)
 		vscode.window.showErrorMessage('Failed to initialize Vibe Coder: ' + (error as Error).message)
+		return
+	}
+
+	try {
+		await voiceAgentService.initialize()
+	} catch (error) {
+		console.error('Failed to initialize voice agent:', error)
 		return
 	}
 
@@ -41,10 +50,12 @@ export async function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('vibe-coder.startAgent', async () => {
 			console.log('Starting agent...')
 			try {
-				await deepgramService.startAgent()
+				await voiceAgentService.startAgent()
 			} catch (error) {
 				console.error('Failed to start voice agent:', error)
-				vscode.window.showErrorMessage('Failed to start voice agent: ' + (error as Error).message)
+				vscode.window.showErrorMessage(
+					`Failed to start voice agent: ${(error as Error).message}`
+				)
 			}
 		}),
 
@@ -58,6 +69,16 @@ export async function activate(context: vscode.ExtensionContext) {
 			}
 		}),
 
+		vscode.commands.registerCommand('vibe-coder.stopDictation', async () => {
+			console.log('Stopping dictation...')
+			try {
+				await deepgramService.stopDictation()
+			} catch (error) {
+				console.error('Failed to stop dictation:', error)
+				vscode.window.showErrorMessage('Failed to stop dictation: ' + (error as Error).message)
+			}
+		}),
+
 		vscode.commands.registerCommand('vibe-coder.test', () => {
 			console.log('Test command executed')
 			vscode.window.showInformationMessage('Vibe Coder test command works!')
@@ -65,7 +86,12 @@ export async function activate(context: vscode.ExtensionContext) {
 	)
 
 	// Add service to subscriptions for cleanup
-	context.subscriptions.push({ dispose: () => deepgramService.dispose() })
+	context.subscriptions.push({ 
+		dispose: () => {
+			deepgramService.dispose()
+			voiceAgentService.dispose()
+		} 
+	})
 
 	console.log('Vibe Coder extension activated successfully')
 }

@@ -1,7 +1,7 @@
 const esbuild = require("esbuild");
 
-const production = process.argv.includes('--production');
-const watch = process.argv.includes('--watch');
+const isProduction = process.argv.includes('--production');
+const isWatch = process.argv.includes('--watch');
 
 /**
  * @type {import('esbuild').Plugin}
@@ -23,36 +23,39 @@ const esbuildProblemMatcherPlugin = {
 	},
 };
 
-async function main() {
-	const ctx = await esbuild.context({
-		entryPoints: [
-			'src/extension.ts'
-		],
-		bundle: true,
-		format: 'cjs',
-		minify: production,
-		sourcemap: !production,
-		sourcesContent: false,
-		platform: 'node',
-		outfile: 'dist/extension.js',
-		external: ['vscode'],
-		logLevel: 'info',
-		define: {
-			'process.env.NODE_ENV': production ? '"production"' : '"development"'
-		},
-		plugins: [
-			esbuildProblemMatcherPlugin,
-		],
-	});
-	if (watch) {
-		await ctx.watch();
-	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
-	}
-}
+/** @type {import('esbuild').BuildOptions} */
+const buildOptions = {
+	entryPoints: ['./src/extension.ts'],
+	bundle: true,
+	outfile: 'dist/extension.js',
+	external: [
+		'vscode',
+		// Add native modules to external
+		'speaker',
+		'node-microphone'
+	],
+	format: 'cjs',
+	platform: 'node',
+	target: 'node16',
+	sourcemap: !isProduction,
+	minify: isProduction,
+	sourcesContent: false,
+	logLevel: 'info',
+	define: {
+		'process.env.NODE_ENV': isProduction ? '"production"' : '"development"'
+	},
+	plugins: [
+		esbuildProblemMatcherPlugin,
+	],
+};
 
-main().catch(e => {
-	console.error(e);
-	process.exit(1);
-});
+if (isWatch) {
+	// Watch mode
+	esbuild.context(buildOptions)
+		.then(ctx => ctx.watch())
+		.catch(() => process.exit(1));
+} else {
+	// Single build
+	esbuild.build(buildOptions)
+		.catch(() => process.exit(1));
+}
