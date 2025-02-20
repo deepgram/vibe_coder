@@ -41,6 +41,7 @@ export class ModeManagerService {
     
     this.llmService = new LLMService(context)
     this.promptManager = new PromptManagementService(context)
+    this.promptManager.setOnPromptsChanged(() => this.refreshWebviewPrompts())
 
     // Replace PTT commands with toggle command
     context.subscriptions.push(
@@ -87,18 +88,41 @@ export class ModeManagerService {
   }
 
   private createPanel() {
+    // Get editor width
+    const editor = vscode.window.activeTextEditor
+    const columnWidth = editor?.visibleRanges[0]?.end.character || 120
+
+    // Calculate 40% of available space
+    const panelColumn = Math.floor(columnWidth * 0.4)
+
     this.panel = vscode.window.createWebviewPanel(
       'vibeCoder.panel',
       'Vibe Coder',
-      vscode.ViewColumn.Beside,
+      {
+        viewColumn: vscode.ViewColumn.Beside,
+        preserveFocus: true
+      },
       {
         enableScripts: true,
         retainContextWhenHidden: true
       }
     )
 
+    // Set initial size
     this.panel.webview.html = this.getWebviewContent()
     this.setupMessageHandling()
+
+    // Set width after creation
+    if (this.panel) {
+      this.panel.onDidChangeViewState(e => {
+        if (e.webviewPanel.visible) {
+          vscode.commands.executeCommand('workbench.action.setEditorLayoutSize', {
+            id: this.panel?.viewColumn,
+            size: panelColumn
+          })
+        }
+      })
+    }
 
     this.panel.onDidDispose(() => {
       this.cleanup()
@@ -120,6 +144,7 @@ export class ModeManagerService {
               font-family: var(--vscode-font-family);
               color: var(--vscode-editor-foreground);
               background-color: var(--vscode-editor-background);
+              min-width: 600px;
             }
             .mode-toggle {
               display: flex;
@@ -235,18 +260,12 @@ export class ModeManagerService {
             }
 
             .container-label {
-              position: absolute;
-              top: -24px;
-              left: 0;
+              position: static;
               color: ${matrixGreen};
               font-size: 12px;
               text-transform: uppercase;
               letter-spacing: 1px;
-              padding: 4px 8px;
-              background: ${matrixBlack};
-              border: 1px solid ${matrixGreen};
-              border-radius: 4px;
-              z-index: 10;
+              white-space: nowrap;
             }
 
             #transcript {
@@ -298,24 +317,11 @@ export class ModeManagerService {
               border-radius: 4px;
               padding: 20px;
               position: relative;
-              height: calc(100% - 40px);
+              height: 100%;
               margin-top: 40px;
               overflow: hidden;
-            }
-
-            .container-label {
-              position: absolute;
-              top: -24px;
-              left: 0;
-              color: ${matrixGreen};
-              font-size: 12px;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-              padding: 4px 8px;
-              background: ${matrixBlack};
-              border: 1px solid ${matrixGreen};
-              border-radius: 4px;
-              z-index: 10;
+              display: flex;
+              flex-direction: column;
             }
 
             #prompt-output {
@@ -324,7 +330,7 @@ export class ModeManagerService {
               line-height: 1.5;
               white-space: pre-wrap;
               font-family: 'Courier New', monospace;
-              height: 100%;
+              flex: 1;
               overflow-y: auto;
               padding-right: 10px;
             }
@@ -418,6 +424,36 @@ export class ModeManagerService {
             .success-message.visible {
               opacity: 0.8;
             }
+
+            /* Prompt Selection Section */
+            .prompt-selection {
+              margin: 20px 0 22px 0;
+              position: relative;
+              display: flex;
+              align-items: center;
+              gap: 10px;
+            }
+
+            #prompt-select {
+              flex: 1;
+              background: ${matrixBlack};
+              color: ${matrixGreen};
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              padding: 8px;
+              font-family: 'Courier New', monospace;
+              cursor: pointer;
+              outline: none;
+            }
+
+            #prompt-select:hover {
+              box-shadow: 0 0 8px ${matrixGreen};
+            }
+
+            #prompt-select option {
+              background: ${matrixBlack};
+              color: ${matrixGreen};
+            }
           </style>
         </head>
         <body>
@@ -443,6 +479,11 @@ export class ModeManagerService {
             <div class="code-mode ${this.currentMode === 'code' ? 'active' : ''}">
               <div class="matrix-background" id="matrix-rain"></div>
               
+              <div class="prompt-selection">
+                <label for="prompt-select" class="container-label">Select Prompt:</label>
+                <select id="prompt-select"></select>
+              </div>
+
               <div class="transcription-container">
                 <div class="container-label">LIVE TRANSCRIPTION</div>
                 <div id="transcript"></div>
@@ -538,6 +579,13 @@ export class ModeManagerService {
                     successMsg.classList.add('visible');
                   }
                   break;
+                case 'populatePrompts':
+                  populatePromptDropdown(message.prompts)
+                  break
+                case 'setCurrentPrompt':
+                  const select = document.getElementById('prompt-select')
+                  if (select) select.value = message.id
+                  break
               }
             });
 
@@ -563,6 +611,24 @@ export class ModeManagerService {
             document.addEventListener('DOMContentLoaded', () => {
               setupMatrixRain();
             });
+
+            function populatePromptDropdown(prompts) {
+              const select = document.getElementById('prompt-select')
+              if (!select) return
+              
+              select.innerHTML = ''
+              prompts.forEach(prompt => {
+                const option = document.createElement('option')
+                option.value = prompt.id
+                option.textContent = prompt.name
+                select.appendChild(option)
+              })
+
+              select.addEventListener('change', () => {
+                const selectedId = select.value
+                vscode.postMessage({ type: 'setPrompt', id: selectedId })
+              })
+            }
           </script>
         </body>
       </html>
@@ -572,14 +638,21 @@ export class ModeManagerService {
   private setupMessageHandling() {
     if (!this.panel) return
 
+    // Initial setup of prompts
+    this.refreshPrompts()
+
     this.panel.webview.onDidReceiveMessage(async message => {
-      console.log('Received message:', message)  // Add logging
+      console.log('Received message:', message)
       switch (message.type) {
         case 'switchMode':
           await this.setMode(message.mode as Mode)
           break
         case 'toggleDictation':
-          await this.toggleDictation()  // Add this case
+          await this.toggleDictation()
+          break
+        case 'setPrompt':
+          await this.promptManager.setCurrentPrompt(message.id)
+          this.refreshPrompts() // Refresh after changing prompt
           break
       }
     })
@@ -738,5 +811,27 @@ export class ModeManagerService {
         target: 'code-status'
       })
     }
+  }
+
+  // Add a method to refresh the prompts in the webview
+  private refreshPrompts() {
+    if (!this.panel) return
+    
+    // Send updated prompts list
+    this.panel.webview.postMessage({
+      type: 'populatePrompts',
+      prompts: [this.promptManager.getDefaultPrompt(), ...this.promptManager.getAllPrompts()]
+    })
+
+    // Update selected prompt
+    this.panel.webview.postMessage({
+      type: 'setCurrentPrompt',
+      id: this.promptManager.getCurrentPrompt().id
+    })
+  }
+
+  // Add a method to be called when prompts are modified
+  public refreshWebviewPrompts() {
+    this.refreshPrompts()
   }
 } 

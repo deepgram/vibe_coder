@@ -62,6 +62,7 @@ Do not return anything other than the prompt itself.
   }
 
   private currentPromptId: string = 'default'
+  private onPromptsChanged?: () => void
 
   constructor(private context: vscode.ExtensionContext) {
     this.loadPrompts()
@@ -117,10 +118,15 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
     return currentPrompt || this.DEFAULT_PROMPT
   }
 
+  setOnPromptsChanged(callback: () => void) {
+    this.onPromptsChanged = callback
+  }
+
   async addPrompt(name: string, prompt: string): Promise<void> {
     const id = Date.now().toString()
     this.prompts.push({ id, name, prompt })
     await this.savePrompts()
+    this.onPromptsChanged?.()
   }
 
   async updatePrompt(id: string, updates: Partial<DictationPrompt>): Promise<void> {
@@ -128,15 +134,17 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
     if (index === -1) throw new Error('Prompt not found')
     this.prompts[index] = { ...this.prompts[index], ...updates }
     await this.savePrompts()
+    this.onPromptsChanged?.()
   }
 
   async deletePrompt(id: string): Promise<void> {
-    if (id === 'default') return // Prevent deleting default prompt
+    if (id === 'default') return
     this.prompts = this.prompts.filter(p => p.id !== id)
     if (this.currentPromptId === id) {
       this.currentPromptId = 'default'
     }
     await this.savePrompts()
+    this.onPromptsChanged?.()
   }
 
   async setCurrentPrompt(id: string): Promise<void> {
@@ -144,5 +152,6 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
     await this.context.globalState.update(this.currentPromptKey, id)
     const prompt = this.getCurrentPrompt()
     vscode.window.showInformationMessage(`Active prompt set to: ${prompt.name}`)
+    this.onPromptsChanged?.()
   }
 } 

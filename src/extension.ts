@@ -103,16 +103,75 @@ export async function activate(context: vscode.ExtensionContext) {
 					})
 					if (!name) return
 
-					// Use proper InputBoxOptions type
-					const prompt = await vscode.window.showInputBox({
-						prompt: 'Enter the system prompt text',
-						value: '',
-						valueSelection: undefined,
-						ignoreFocusOut: true
-					})
-					if (!prompt) return
+					// Create a temp file for the new prompt
+					const tmpFile = vscode.Uri.file(
+						`${context.globalStorageUri.fsPath}/prompt-new.md`
+					)
 
-					await modeManager.promptManager.addPrompt(name, prompt)
+					// Ensure the directory exists
+					await vscode.workspace.fs.createDirectory(context.globalStorageUri)
+
+					// Write initial content with template
+					await vscode.workspace.fs.writeFile(tmpFile, Buffer.from(
+						`// Prompt: ${name}
+// Edit the prompt below and save to create
+// Lines starting with // are ignored
+
+You are an AI assistant helping with...
+
+Key responsibilities:
+1. 
+2. 
+3. 
+
+Guidelines:
+- 
+- 
+- 
+
+Example input: "..."
+Example output: "..."
+`
+					))
+
+					const doc = await vscode.workspace.openTextDocument(tmpFile)
+					const editor = await vscode.window.showTextDocument(doc, {
+						preview: false,
+						viewColumn: vscode.ViewColumn.Beside
+					})
+
+					// Add save handler
+					const disposable = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
+						if (savedDoc.uri.toString() === tmpFile.toString()) {
+							// Extract prompt content (ignore comment lines)
+							const content = savedDoc.getText()
+								.split('\n')
+								.filter(line => !line.trim().startsWith('//'))
+								.join('\n')
+								.trim()
+
+							// Create the new prompt
+							await modeManager.promptManager.addPrompt(name, content)
+
+							vscode.window.showInformationMessage(`Prompt "${name}" created successfully`)
+							
+							// Clean up
+							disposable.dispose()
+							await vscode.workspace.fs.delete(tmpFile)
+						}
+					})
+
+					// Also clean up if the editor is closed without saving
+					const closeDisposable = vscode.workspace.onDidCloseTextDocument(async (closedDoc) => {
+						if (closedDoc.uri.toString() === tmpFile.toString()) {
+							closeDisposable.dispose()
+							try {
+								await vscode.workspace.fs.delete(tmpFile)
+							} catch (e) {
+								// File might already be deleted, ignore
+							}
+						}
+					})
 					break
 				}
 
