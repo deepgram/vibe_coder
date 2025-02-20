@@ -4,6 +4,9 @@ import { createClient } from '@deepgram/sdk'
 import { AgentPanel } from './agent-panel'
 import Microphone from 'node-microphone'
 import Speaker from 'speaker'
+import { PromptManagementService } from './prompt-management-service'
+import { env, window, workspace } from 'vscode'
+import { LLMService } from './llm-service'
 
 interface AgentConfig {
   type: 'SettingsConfiguration'
@@ -28,6 +31,26 @@ interface AgentConfig {
       }
       model: string
       instructions: string
+      functions: Array<{
+        name: string
+        description: string
+        url: string
+        method: string
+        headers: Array<{
+          key: string
+          value: string
+        }>
+        parameters: {
+          type: string
+          properties: {
+            [key: string]: {
+              type: string
+              description: string
+            }
+          }
+          required: string[]
+        }
+      }>
     }
     speak: {
       model: string
@@ -70,9 +93,13 @@ export class VoiceAgentService {
   private audioBuffers: Buffer[] = []
   private audioPlayer: AudioPlayer | null = null
   private readonly AGENT_SAMPLE_RATE = 24000  // Agent's output sample rate
+  private promptManager: PromptManagementService
+  private llmService: LLMService
 
   constructor(private context: vscode.ExtensionContext) {
     this.agentPanel = new AgentPanel(context)
+    this.promptManager = new PromptManagementService(context)
+    this.llmService = new LLMService(context)
   }
 
   async initialize(): Promise<void> {
@@ -114,7 +141,7 @@ export class VoiceAgentService {
         console.log('WebSocket connection opened')
       })
 
-      this.ws.on('message', (data: WebSocket.Data) => {
+      this.ws.on('message', async (data: WebSocket.Data) => {
         // First try to parse as JSON
         try {
           const message = JSON.parse(data.toString()) as AgentMessage
@@ -123,36 +150,7 @@ export class VoiceAgentService {
           switch (message.type) {
             case 'Welcome':
               console.log('Received Welcome, sending configuration...')
-              const config: AgentConfig = {
-                type: 'SettingsConfiguration',
-                audio: {
-                  input: {
-                    encoding: 'linear16',
-                    sample_rate: 16000
-                  },
-                  output: {
-                    encoding: 'linear16',
-                    sample_rate: 24000,
-                    container: 'none'
-                  }
-                },
-                agent: {
-                  listen: {
-                    model: 'nova-2'
-                  },
-                  think: {
-                    provider: {
-                      type: 'open_ai'
-                    },
-                    model: 'gpt-4o-mini',
-                    instructions: 'You are a coding assistant. Help users write, modify, and understand code. When asked to write code, provide clear, well-documented solutions. When asked about code, explain concepts clearly and provide examples.'
-                  },
-                  speak: {
-                    model: 'aura-asteria-en'
-                  }
-                }
-              }
-
+              const config = this.getAgentConfig()
               console.log('Sending configuration:', JSON.stringify(config, null, 2))
               this.ws?.send(JSON.stringify(config))
               this.setupMicrophone()
@@ -173,6 +171,32 @@ export class VoiceAgentService {
               break
             case 'FunctionCall':
               console.log('Function call requested:', message.function)
+              if (!message.function || !message.function_call_id) {
+                console.error('Invalid function call message')
+                break
+              }
+              try {
+                const result = await this.handleFunctionCall(
+                  message.function_call_id, 
+                  message.function
+                )
+                // Send the response back to the agent
+                const response = {
+                  type: 'FunctionCallResponse',
+                  function_call_id: message.function_call_id,
+                  response: JSON.stringify(result)
+                }
+                this.ws?.send(JSON.stringify(response))
+              } catch (error) {
+                console.error('Function call failed:', error)
+                // Send error response to agent
+                const errorResponse = {
+                  type: 'FunctionCallResponse',
+                  function_call_id: message.function_call_id,
+                  error: (error as Error).message
+                }
+                this.ws?.send(JSON.stringify(errorResponse))
+              }
               break
             case 'Error':
               console.error('Agent error:', message)
@@ -303,24 +327,94 @@ export class VoiceAgentService {
     this.ws.send(JSON.stringify(injectMessage))
   }
 
-  async handleFunctionCall(functionCallId: string, result: any) {
+  async handleFunctionCall(functionCallId: string, func: any) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error('Agent not connected')
     }
 
-    const response = {
-      type: 'FunctionCallResponse',
-      function_call_id: functionCallId,
-      response: JSON.stringify(result)
+    if (func.name === 'process_dictation') {
+      const args = JSON.parse(func.arguments)
+      const prompt = args.promptId 
+        ? this.promptManager.getPromptById(args.promptId)
+        : this.promptManager.getPromptById('default-code')
+
+      if (!prompt) throw new Error('Prompt not found')
+
+      const result = await this.llmService.processText({ 
+        text: args.text,
+        prompt 
+      })
+      
+      if (result.error) {
+        window.showWarningMessage(result.error)
+        await env.clipboard.writeText(args.text)
+        return { success: false, error: result.error }
+      }
+
+      await env.clipboard.writeText(result.text)
+      return { success: true, text: result.text }
     }
 
-    this.ws.send(JSON.stringify(response))
+    throw new Error(`Unknown function: ${func.name}`)
   }
 
   private handleRawAudio(data: Buffer) {
     console.log('Received raw audio data, length:', data.length, 
       'sample rate:', this.AGENT_SAMPLE_RATE)
     this.audioPlayer?.play(data)
+  }
+
+  private getAgentConfig(): AgentConfig {
+    return {
+      type: 'SettingsConfiguration',
+      audio: {
+        input: {
+          encoding: 'linear16',
+          sample_rate: 16000
+        },
+        output: {
+          encoding: 'linear16',
+          sample_rate: 24000,
+          container: 'none'
+        }
+      },
+      agent: {
+        listen: {
+          model: 'nova-2'
+        },
+        think: {
+          provider: {
+            type: 'open_ai'
+          },
+          model: 'gpt-4o-mini',
+          instructions: 'You are a coding assistant. Help users write, modify, and understand code. When you detect that the user is dictating content (rather than asking a question or giving a command), use the process_dictation function.',
+          functions: [{
+            name: 'process_dictation',
+            description: 'Process user speech as formatted text using context-aware prompts. Use this when the user is dictating content that needs to be formatted.',
+            url: 'local://process_dictation',
+            method: 'post',
+            headers: [],
+            parameters: {
+              type: 'object',
+              properties: {
+                text: {
+                  type: 'string',
+                  description: 'The text to process from user speech'
+                },
+                promptId: {
+                  type: 'string',
+                  description: 'Optional ID of the prompt to use for formatting'
+                }
+              },
+              required: ['text']
+            }
+          }]
+        },
+        speak: {
+          model: 'aura-asteria-en'
+        }
+      }
+    }
   }
 
   dispose(): void {
