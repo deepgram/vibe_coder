@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import WebSocket from 'ws'
 import { createClient } from '@deepgram/sdk'
-import { AgentPanel } from './agent-panel'
+// import { AgentPanel } from './agent-panel'
 import Microphone from 'node-microphone'
 import Speaker from 'speaker'
 import { PromptManagementService } from './prompt-management-service'
@@ -97,6 +97,10 @@ interface AgentMessage {
   total_latency?: number
 }
 
+export interface MessageHandler {
+  postMessage(message: unknown): Thenable<boolean>
+}
+
 export class VoiceAgentService {
   private ws: WebSocket | null = null
   private isInitialized = false
@@ -109,16 +113,19 @@ export class VoiceAgentService {
   private eventEmitter = new EventEmitter()
   private commandRegistry: CommandRegistryService
   private workspaceService: WorkspaceService
+  private agentPanel: MessageHandler | undefined = undefined
 
   constructor(
     private context: vscode.ExtensionContext,
     private updateStatus: (status: string) => void,
-    private updateTranscript: (text: string) => void
+    private updateTranscript: (text: string) => void,
+    agentPanel?: MessageHandler
   ) {
     this.promptManager = new PromptManagementService(context)
     this.llmService = new LLMService(context)
     this.commandRegistry = new CommandRegistryService()
     this.workspaceService = new WorkspaceService()
+    this.agentPanel = agentPanel
   }
 
   async initialize(): Promise<void> {
@@ -221,16 +228,28 @@ export class VoiceAgentService {
               console.log('Function calling debug:', message)
               break
             case 'ConversationText':
+              if (message.role === 'assistant') {
+                this.agentPanel?.postMessage({
+                  type: 'updateTranscript',
+                  text: message.content || '',
+                  target: 'agent-transcript',
+                  animate: true
+                })
+              }
               this.eventEmitter.emit('transcript', message.content || '')
               break
             case 'UserStartedSpeaking':
               console.log('User started speaking, stopping audio playback')
               this.audioPlayer?.stop()
+              this.sendSpeakingStateUpdate('idle')
               break
             case 'AgentStartedSpeaking':
+              console.log('Agent started speaking')
+              this.sendSpeakingStateUpdate('speaking')
+              break
             case 'AgentAudioDone':
-              // These are informational messages, we can log them
-              console.log(`Received ${message.type}`)
+              console.log('Agent audio done')
+              this.sendSpeakingStateUpdate('idle')
               break
             case 'Error':
               console.error('Agent error:', message)
@@ -432,7 +451,19 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
   private handleRawAudio(data: Buffer) {
     console.log('Received raw audio data, length:', data.length, 
       'sample rate:', this.AGENT_SAMPLE_RATE)
-    this.audioPlayer?.play(data)
+    
+    // Initialize audio player if needed
+    if (!this.audioPlayer) {
+      this.audioPlayer = new AudioPlayer(this.AGENT_SAMPLE_RATE)
+      this.audioPlayer.onPlaybackStarted(() => {
+        this.sendSpeakingStateUpdate('speaking')
+      })
+      this.audioPlayer.onPlaybackStopped(() => {
+        this.sendSpeakingStateUpdate('idle')
+      })
+    }
+    
+    this.audioPlayer.play(data)
   }
 
   private async getAgentConfig(): Promise<AgentConfig> {
@@ -509,6 +540,25 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
     this.eventEmitter.on('transcript', callback)
     return () => this.eventEmitter.off('transcript', callback)
   }
+
+  private sendSpeakingStateUpdate(state: 'speaking' | 'idle') {
+    console.log('Sending speaking state update:', state)
+    if (!this.agentPanel) {
+      console.warn('No agent panel available for state update')
+      return
+    }
+    
+    // Send status text instead of animation state
+    this.agentPanel.postMessage({
+      type: 'updateStatus',
+      text: state === 'speaking' ? 'Agent Speaking...' : 'Ready',
+      target: 'vibe-status'
+    })
+  }
+
+  public setAgentPanel(handler: MessageHandler | undefined) {
+    this.agentPanel = handler
+  }
 }
 
 // Add AudioPlayer class
@@ -516,20 +566,43 @@ class AudioPlayer {
   private speaker: SpeakerWrapper
   private bufferedAudio: Buffer[] = []
   private targetSpeakerAudioMs = 400
+  private eventEmitter = new EventEmitter()
 
   constructor(sampleRate: number) {
     console.log('Initializing speaker with sample rate:', sampleRate)
     this.speaker = new SpeakerWrapper(sampleRate)
-    setInterval(() => this.refillSpeaker(), 200)
+    setInterval(() => this.checkAndRefillSpeaker(), 200)
   }
 
   play(audio: Buffer) {
+    const wasEmpty = this.bufferedAudio.length === 0
     this.bufferedAudio.push(audio)
-    this.refillSpeaker()
+    if (wasEmpty) {
+      this.eventEmitter.emit('playbackStarted')
+    }
+    this.checkAndRefillSpeaker()
   }
 
   stop() {
     this.bufferedAudio = []
+    this.eventEmitter.emit('playbackStopped')
+  }
+
+  onPlaybackStarted(callback: () => void) {
+    this.eventEmitter.on('playbackStarted', callback)
+  }
+
+  onPlaybackStopped(callback: () => void) {
+    this.eventEmitter.on('playbackStopped', callback)
+  }
+
+  private checkAndRefillSpeaker() {
+    const wasPlaying = this.bufferedAudio.length > 0
+    this.refillSpeaker()
+    // If we just ran out of audio, emit stopped event
+    if (wasPlaying && this.bufferedAudio.length === 0) {
+      this.eventEmitter.emit('playbackStopped')
+    }
   }
 
   private refillSpeaker() {

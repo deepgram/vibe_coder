@@ -15,7 +15,8 @@ export class ModeManagerService {
   public currentMode: Mode = 'code'
   private panel: vscode.WebviewPanel | undefined
   private isInitialized = false
-  private transcriptBuffer = ''
+  private finalTranscripts: string[] = []
+  private interimTranscript = ''
   private isDictationActive = false
   private commandRegistry: CommandRegistryService
 
@@ -29,7 +30,8 @@ export class ModeManagerService {
       (status: string) => {
         this.panel?.webview.postMessage({ 
           type: 'updateStatus', 
-          text: status 
+          text: status,
+          target: 'vibe-status'
         })
       },
       (text: string) => {
@@ -45,7 +47,7 @@ export class ModeManagerService {
     this.promptManager = new PromptManagementService(context)
     this.promptManager.setOnPromptsChanged(() => this.refreshWebviewPrompts())
 
-    // Replace PTT commands with toggle command
+    // Register toggle command
     context.subscriptions.push(
       vscode.commands.registerCommand('vibe-coder.toggleDictation', async () => {
         if (this.currentMode !== 'code') return
@@ -58,45 +60,37 @@ export class ModeManagerService {
 
   async initialize(): Promise<void> {
     console.log('ModeManagerService initializing...')
-    // Initialize both services
     await this.deepgramService.initialize()
     await this.voiceAgentService.initialize()
-
-    // Set up transcript listeners after initialization
     this.setupTranscriptListeners()
-    
     this.isInitialized = true
     console.log('ModeManagerService initialized successfully')
   }
 
   private setupTranscriptListeners() {
     console.log('Setting up transcript listeners')
-    this.deepgramService.onTranscript((text) => {
-      console.log('Received transcript in mode manager:', text, 
-        'Mode:', this.currentMode, 
-        'Dictation Active:', this.isDictationActive
-      )
-      
+    this.deepgramService.onTranscript((text: string, isFinal: boolean) => {
+      console.log('Received transcript in mode manager:', text, 'isFinal:', isFinal, 'Mode:', this.currentMode, 'Dictation Active:', this.isDictationActive)
       if (this.currentMode === 'code' && this.isDictationActive) {
-        // Append to buffer with space
-        this.transcriptBuffer += (this.transcriptBuffer ? ' ' : '') + text
-        
-        // Update UI with current buffer
+        if (isFinal) {
+          this.finalTranscripts.push(text)
+          this.interimTranscript = ''
+        } else {
+          this.interimTranscript = text
+        }
+        const displayTranscript = this.finalTranscripts.join(' ') + (this.interimTranscript ? ' ' + this.interimTranscript : '')
         this.panel?.webview.postMessage({ 
           type: 'updateTranscript', 
-          text: this.transcriptBuffer,
-          target: 'transcript' 
+          text: displayTranscript,
+          target: 'transcript'
         })
       }
     })
   }
 
   private createPanel() {
-    // Get editor width
     const editor = vscode.window.activeTextEditor
     const columnWidth = editor?.visibleRanges[0]?.end.character || 120
-
-    // Calculate 40% of available space
     const panelColumn = Math.floor(columnWidth * 0.4)
 
     this.panel = vscode.window.createWebviewPanel(
@@ -112,11 +106,16 @@ export class ModeManagerService {
       }
     )
 
-    // Set initial size
     this.panel.webview.html = this.getWebviewContent()
     this.setupMessageHandling()
+    
+    this.voiceAgentService.setAgentPanel({
+      postMessage: (message: unknown): Thenable<boolean> => {
+        console.log('Forwarding message to webview:', message)
+        return this.panel?.webview.postMessage(message) || Promise.resolve(false)
+      }
+    })
 
-    // Set width after creation
     if (this.panel) {
       this.panel.onDidChangeViewState(e => {
         if (e.webviewPanel.visible) {
@@ -138,6 +137,29 @@ export class ModeManagerService {
     const matrixDarkGreen = '#003B00'
     const matrixBlack = '#0D0208'
 
+    const styles = `
+      .terminal-text {
+        font-family: 'Courier New', monospace;
+        color: ${matrixGreen};
+        white-space: pre-wrap;
+        line-height: 1.4;
+        position: relative;
+        z-index: 1;
+        min-height: 20px;
+      }
+
+      .terminal-text::after {
+        content: '▋';
+        animation: blink 1s step-end infinite;
+        margin-left: 2px;
+      }
+
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0; }
+      }
+    `
+
     return `
       <!DOCTYPE html>
       <html>
@@ -145,10 +167,11 @@ export class ModeManagerService {
           <style>
             body {
               padding: 20px;
-              font-family: var(--vscode-font-family);
-              color: var(--vscode-editor-foreground);
-              background-color: var(--vscode-editor-background);
-              min-width: 600px;
+              font-family: 'Courier New', monospace;
+              color: ${matrixGreen};
+              background-color: ${matrixBlack};
+              margin: 0;
+              min-height: 100vh;
             }
             .mode-toggle {
               display: flex;
@@ -159,342 +182,28 @@ export class ModeManagerService {
               margin-bottom: 20px;
               width: fit-content;
               position: relative;
-              overflow: hidden;
+              z-index: 1;
             }
             .mode-button {
               padding: 8px 24px;
               border-radius: 20px;
               border: none;
               cursor: pointer;
-              font-family: 'Courier New', monospace;
               font-size: 14px;
               text-transform: uppercase;
               letter-spacing: 1px;
-              position: relative;
               transition: all 0.3s ease;
-              z-index: 1;
               background: transparent;
               color: ${matrixGreen};
             }
             .mode-button.active {
               background: ${matrixDarkGreen};
-              color: ${matrixGreen};
               text-shadow: 0 0 8px ${matrixGreen}, 0 0 12px ${matrixGreen};
-              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3), inset 0 0 8px rgba(0, 255, 65, 0.2);
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3);
             }
             .mode-button:not(.active) {
-              background: transparent;
-              color: ${matrixGreen};
               opacity: 0.7;
             }
-            .mode-button:hover:not(.active) {
-              opacity: 1;
-              text-shadow: 0 0 8px ${matrixGreen};
-            }
-            .mode-button.active::before {
-              content: '';
-              position: absolute;
-              top: 0;
-              left: 0;
-              right: 0;
-              bottom: 0;
-              background: ${matrixGreen};
-              opacity: 0.1;
-              filter: blur(8px);
-              border-radius: 20px;
-              z-index: -1;
-            }
-            #content-area {
-              min-height: 300px;
-            }
-            .vibe-mode, .code-mode {
-              display: none;
-            }
-            .vibe-mode.active, .code-mode.active {
-              display: block;
-            }
-            .orb-container {
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              height: 200px;
-            }
-            .orb {
-              width: 100px;
-              height: 100px;
-              border-radius: 50%;
-              background: radial-gradient(circle at 30% 30%, var(--vscode-button-background), transparent);
-              box-shadow: 0 0 20px var(--vscode-button-background);
-              opacity: 0.8;
-              transition: all 0.3s;
-            }
-            .orb.speaking {
-              transform: scale(1.1);
-              opacity: 1;
-            }
-            .status {
-              display: flex;
-              align-items: center;
-              gap: 8px;
-              margin-bottom: 12px;
-              color: var(--vscode-descriptionForeground);
-            }
-
-            /* Matrix Theme Styles */
-            .code-mode {
-              background: ${matrixBlack};
-              padding: 20px;
-              font-family: 'Courier New', monospace;
-              height: 100vh;
-              display: grid;
-              grid-template-rows: auto 60px 1fr;
-              gap: 20px;
-              position: relative;
-              overflow: hidden;
-              z-index: 1;
-            }
-
-            /* Transcription Section */
-            .transcription-container {
-              background: rgba(0, 59, 0, 0.3);
-              border: 1px solid ${matrixGreen};
-              border-radius: 4px;
-              margin-top: 24px;
-              position: relative;
-              overflow: hidden;
-            }
-
-            .container-label {
-              position: static;
-              color: ${matrixGreen};
-              font-size: 12px;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-              white-space: nowrap;
-            }
-
-            #transcript {
-              color: ${matrixGreen};
-              font-size: 14px;
-              line-height: 1.4;
-              text-shadow: 0 0 10px rgba(0, 255, 65, 0.4);
-              height: 100%;
-              overflow-y: auto;
-              margin: 0;
-              padding: 0;
-            }
-
-            /* Processing Section */
-            .processing-container {
-              display: flex;
-              flex-direction: column;
-              align-items: center;
-              justify-content: center;
-              padding: 4px 0;
-              position: relative;
-              margin: 20px 0;
-            }
-
-            .status-display {
-              display: flex;
-              align-items: center;
-              gap: 10px;
-              color: ${matrixGreen};
-              border-bottom: 1px solid ${matrixDarkGreen};
-              width: 100%;
-              padding-bottom: 4px;
-              justify-content: center;
-            }
-
-            .success-message {
-              color: ${matrixGreen};
-              font-size: 12px;
-              opacity: 0;
-              transition: opacity 0.3s ease;
-              padding-top: 4px;
-              font-family: 'Courier New', monospace;
-            }
-
-            /* Prompt Output Section */
-            .prompt-container {
-              background: rgba(0, 59, 0, 0.2);
-              border: 1px solid ${matrixGreen};
-              border-radius: 4px;
-              padding: 20px;
-              position: relative;
-              height: 100%;
-              margin-top: 40px;
-              overflow: hidden;
-              display: flex;
-              flex-direction: column;
-            }
-
-            #prompt-output {
-              color: ${matrixGreen};
-              font-size: 13px;
-              line-height: 1.5;
-              white-space: pre-wrap;
-              font-family: 'Courier New', monospace;
-              flex: 1;
-              overflow-y: auto;
-              padding-right: 10px;
-            }
-
-            /* Matrix Rain Background */
-            @keyframes pulse {
-              0% { opacity: 1; }
-              50% { opacity: 0.3; }
-              100% { opacity: 1; }
-            }
-
-            /* Control Button Styling */
-            .controls {
-              position: absolute;
-              top: 10px;
-              right: 0;
-              z-index: 100;
-              display: flex;
-              align-items: center;
-              gap: 10px;
-            }
-
-            #dictation-toggle {
-              background: transparent;
-              border: 1px solid ${matrixGreen};
-              color: ${matrixGreen};
-              padding: 8px 16px;
-              cursor: pointer;
-              font-family: 'Courier New', monospace;
-              font-size: 12px;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-              transition: all 0.3s ease;
-              outline: none;
-              border-radius: 4px;
-              position: relative;
-            }
-
-            .hotkey-hint {
-              color: ${matrixGreen};
-              opacity: 0.9;
-              font-size: 12px;
-              font-family: 'Courier New', monospace;
-              text-transform: uppercase;
-              letter-spacing: 1px;
-            }
-
-            /* Add scrollbar styling */
-            .transcription-container, .prompt-container {
-              scrollbar-width: thin;
-              scrollbar-color: ${matrixGreen} ${matrixBlack};
-            }
-
-            .transcription-container::-webkit-scrollbar,
-            .prompt-container::-webkit-scrollbar {
-              width: 6px;
-            }
-
-            .transcription-container::-webkit-scrollbar-track,
-            .prompt-container::-webkit-scrollbar-track {
-              background: ${matrixBlack};
-            }
-
-            .transcription-container::-webkit-scrollbar-thumb,
-            .prompt-container::-webkit-scrollbar-thumb {
-              background-color: ${matrixGreen};
-              border-radius: 3px;
-            }
-
-            /* Add success message styling */
-            .success-message {
-              color: ${matrixGreen};
-              font-size: 12px;
-              opacity: 0;
-              transition: opacity 0.3s ease;
-              text-align: center;
-              margin-top: 4px;
-              font-family: 'Courier New', monospace;
-            }
-
-            .success-message.visible {
-              opacity: 0.8;
-            }
-
-            /* Prompt Selection Section */
-            .prompt-selection {
-              margin: 20px 0 22px 0;
-              position: relative;
-              display: flex;
-              align-items: center;
-              gap: 10px;
-            }
-
-            #prompt-select {
-              flex: 1;
-              background: ${matrixBlack};
-              color: ${matrixGreen};
-              border: 1px solid ${matrixGreen};
-              border-radius: 4px;
-              padding: 8px;
-              font-family: 'Courier New', monospace;
-              cursor: pointer;
-              outline: none;
-              transition: all 0.3s ease;
-              box-shadow: 0 0 4px rgba(0, 255, 65, 0.1);
-            }
-
-            #prompt-select:hover {
-              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3), inset 0 0 8px rgba(0, 255, 65, 0.1);
-              text-shadow: 0 0 8px ${matrixGreen};
-            }
-
-            #prompt-select option {
-              background: ${matrixBlack};
-              color: ${matrixGreen};
-            }
-
-            /* Enhanced glow effects */
-            .mode-button.active {
-              background: ${matrixDarkGreen};
-              color: ${matrixGreen};
-              text-shadow: 0 0 8px ${matrixGreen}, 0 0 12px ${matrixGreen};
-              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3), inset 0 0 8px rgba(0, 255, 65, 0.2);
-            }
-
-            .start-button {
-              transition: all 0.3s ease;
-              position: relative;
-              overflow: hidden;
-            }
-
-            .start-button:hover {
-              text-shadow: 0 0 8px ${matrixGreen}, 0 0 12px ${matrixGreen};
-              box-shadow: 0 0 16px rgba(0, 255, 65, 0.4), inset 0 0 8px rgba(0, 255, 65, 0.2);
-            }
-
-            .start-button:hover::after {
-              content: '';
-              position: absolute;
-              top: 0;
-              left: -100%;
-              width: 100%;
-              height: 100%;
-              background: linear-gradient(
-                90deg,
-                transparent,
-                rgba(0, 255, 65, 0.2),
-                transparent
-              );
-              animation: button-shine 1.5s infinite;
-            }
-
-            @keyframes button-shine {
-              100% {
-                left: 200%;
-              }
-            }
-
-            /* NEW LAYOUT CLASSES */
             .content-container {
               width: 100%;
               height: calc(100vh - 100px);
@@ -502,23 +211,22 @@ export class ModeManagerService {
               flex-direction: column;
               position: relative;
             }
+            .vibe-section, .code-section {
+              position: relative;
+              padding: 20px;
+              box-sizing: border-box;
+              overflow: hidden;
+              background: rgba(0, 0, 0, 0.05);
+            }
             .vibe-section {
               height: 40%;
-              width: 100%;
               display: flex;
               flex-direction: column;
               align-items: center;
               justify-content: center;
-              position: relative;
-              padding: 20px;
-              box-sizing: border-box;
             }
             .code-section {
               height: 60%;
-              width: 100%;
-              position: relative;
-              padding: 20px;
-              box-sizing: border-box;
               overflow-y: auto;
             }
             .section-overlay {
@@ -531,7 +239,148 @@ export class ModeManagerService {
               pointer-events: none;
               opacity: 0;
               transition: opacity 0.3s ease;
+              backdrop-filter: blur(4px);
+              -webkit-backdrop-filter: blur(4px);
+              z-index: 1000;
+            }
+            .section-overlay.inactive {
+              opacity: 0.8;
+            }
+            .matrix-canvas {
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              z-index: 0;
+            }
+            .status {
               z-index: 1;
+              color: ${matrixGreen};
+              margin-bottom: 10px;
+            }
+            .transcription-container {
+              background: rgba(0, 59, 0, 0.3);
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              margin-top: 24px;
+              position: relative;
+              overflow: hidden;
+            }
+            .container-label {
+              color: ${matrixGreen};
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+            }
+            #transcript {
+              color: ${matrixGreen};
+              font-size: 14px;
+              line-height: 1.4;
+              text-shadow: 0 0 10px rgba(0, 255, 65, 0.4);
+              height: 100%;
+              overflow-y: auto;
+              margin: 0;
+              padding: 0;
+            }
+            .processing-container {
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              padding: 4px 0;
+              margin: 20px 0;
+            }
+            .status-display {
+              display: flex;
+              align-items: center;
+              gap: 10px;
+              color: ${matrixGreen};
+              border-bottom: 1px solid ${matrixDarkGreen};
+              width: 100%;
+              padding-bottom: 4px;
+              justify-content: center;
+            }
+            .success-message {
+              color: ${matrixGreen};
+              font-size: 12px;
+              opacity: 0;
+              transition: opacity 0.3s ease;
+              padding-top: 4px;
+            }
+            .success-message.visible {
+              opacity: 0.8;
+            }
+            .prompt-container {
+              background: rgba(0, 59, 0, 0.2);
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              padding: 20px;
+              position: relative;
+              height: 100%;
+              margin-top: 40px;
+              overflow: hidden;
+              display: flex;
+              flex-direction: column;
+            }
+            #prompt-output {
+              color: ${matrixGreen};
+              font-size: 13px;
+              line-height: 1.5;
+              white-space: pre-wrap;
+              flex: 1;
+              overflow-y: auto;
+              padding-right: 10px;
+            }
+            .controls {
+              position: absolute;
+              top: 10px;
+              right: 0;
+              z-index: 100;
+              display: flex;
+              align-items: center;
+              gap: 10px;
+            }
+            #dictation-toggle {
+              background: transparent;
+              border: 1px solid ${matrixGreen};
+              color: ${matrixGreen};
+              padding: 8px 16px;
+              cursor: pointer;
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              transition: all 0.3s ease;
+              border-radius: 4px;
+            }
+            .hotkey-hint {
+              color: ${matrixGreen};
+              opacity: 0.9;
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+            }
+            .prompt-selection {
+              margin: 20px 0 22px 0;
+              display: flex;
+              align-items: center;
+              gap: 10px;
+            }
+            #prompt-select {
+              flex: 1;
+              background: ${matrixBlack};
+              color: ${matrixGreen};
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              padding: 8px;
+              cursor: pointer;
+              transition: all 0.3s ease;
+            }
+            #prompt-select:hover {
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3);
+            }
+            #prompt-select option {
+              background: ${matrixBlack};
+              color: ${matrixGreen};
             }
           </style>
         </head>
@@ -546,13 +395,10 @@ export class ModeManagerService {
           <div class="content-container">
             <div class="vibe-section">
               <div class="status">
-                <span class="codicon codicon-broadcast"></span>
                 <span id="vibe-status">Ready</span>
               </div>
-              <div class="orb-container">
-                <div class="orb"></div>
-              </div>
-              <div id="agent-transcript"></div>
+              <canvas class="matrix-canvas" id="matrix-canvas"></canvas>
+              <div id="agent-transcript" class="terminal-text"></div>
               <div class="section-overlay" id="vibe-overlay"></div>
             </div>
             
@@ -567,7 +413,6 @@ export class ModeManagerService {
               </div>
               <div class="processing-container">
                 <div class="status-display">
-                  <span id="code-status-icon"></span>
                   <span id="code-status">Ready</span>
                 </div>
                 <div id="success-message" class="success-message">Copied to clipboard</div>
@@ -586,15 +431,63 @@ export class ModeManagerService {
 
           <script>
             const vscode = acquireVsCodeApi();
-            let currentMode = '${this.currentMode}';  // Track current mode
-            
+            let currentMode = '${this.currentMode}';
+            let currentState = 'disabled'; // 'speaking', 'idle', 'disabled'
+
             function switchMode(mode) {
-              currentMode = mode;  // Update tracked mode
+              currentMode = mode;
               vscode.postMessage({ type: 'switchMode', mode });
             }
 
             function toggleDictation() {
               vscode.postMessage({ type: 'toggleDictation' });
+            }
+
+            // Matrix Rain Animation
+            const canvas = document.getElementById('matrix-canvas');
+            const ctx = canvas.getContext('2d');
+            let animationFrame;
+
+            function resizeCanvas() {
+              canvas.width = canvas.offsetWidth;
+              canvas.height = canvas.offsetHeight;
+            }
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+
+            const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*()';
+            const fontSize = 16;
+            const columns = Math.floor(canvas.width / fontSize);
+            const drops = Array(columns).fill(0);
+
+            function drawMatrix() {
+              ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+              ctx.fillRect(0, 0, canvas.width, canvas.height);
+              ctx.fillStyle = '${matrixGreen}';
+              ctx.font = fontSize + 'px monospace';
+
+              for (let i = 0; i < drops.length; i++) {
+                const speed = currentState === 'speaking' ? 0.1 : 0.05;
+                const active = currentMode === 'vibe' && currentState !== 'disabled';
+                if (active && Math.random() > (currentState === 'speaking' ? 0.95 : 0.98)) {
+                  const char = characters[Math.floor(Math.random() * characters.length)];
+                  ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+                }
+                if (active && drops[i] * fontSize < canvas.height) {
+                  drops[i] += speed;
+                } else if (active && Math.random() > 0.95) {
+                  drops[i] = 0;
+                }
+              }
+            }
+
+            function animateMatrix() {
+              if (currentMode === 'vibe' && currentState !== 'disabled') {
+                drawMatrix();
+                animationFrame = requestAnimationFrame(animateMatrix);
+              } else {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+              }
             }
 
             window.addEventListener('message', event => {
@@ -603,21 +496,11 @@ export class ModeManagerService {
                 case 'updateMode':
                   currentMode = message.mode;
                   updateModeUI(message.mode);
-                  break;
-                case 'updateTranscript':
-                  if (message.target === 'transcript') {
-                    const transcriptEl = document.getElementById('transcript');
-                    if (transcriptEl) transcriptEl.textContent = message.text;
-                  } else if (message.target === 'prompt-output') {
-                    const promptEl = document.getElementById('prompt-output');
-                    if (promptEl) {
-                      promptEl.textContent = message.text;
-                      // Auto-scroll to bottom
-                      promptEl.scrollTop = promptEl.scrollHeight;
-                    }
-                  } else if (message.target === 'agent-transcript') {
-                    const agentEl = document.getElementById('agent-transcript');
-                    if (agentEl) agentEl.textContent = message.text;
+                  if (message.mode === 'vibe' && !animationFrame) {
+                    animateMatrix();
+                  } else if (message.mode === 'code') {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
                   }
                   break;
                 case 'updateStatus':
@@ -632,38 +515,54 @@ export class ModeManagerService {
                       const successMsg = document.getElementById('success-message');
                       if (toggleBtn) {
                         toggleBtn.textContent = isRecording ? 'Stop Dictation' : 'Start Dictation';
-                        toggleBtn.classList.toggle('recording', isRecording);
                       }
-                      // Hide success message when recording starts
                       if (isRecording && successMsg) {
                         successMsg.classList.remove('visible');
                       }
                     }
                   }
                   break;
-                case 'appendTranscript':
-                  if (message.target === 'prompt-output') {
+                case 'updateTranscript':
+                  if (message.target === 'transcript') {
+                    document.getElementById('transcript').textContent = message.text;
+                  } else if (message.target === 'prompt-output') {
                     const promptEl = document.getElementById('prompt-output');
-                    if (promptEl) {
-                      promptEl.textContent += message.text;
-                      // Auto-scroll to bottom
-                      promptEl.scrollTop = promptEl.scrollHeight;
+                    promptEl.textContent = message.text;
+                    promptEl.scrollTop = promptEl.scrollHeight;
+                  } else if (message.target === 'agent-transcript') {
+                    const agentEl = document.getElementById('agent-transcript');
+                    if (message.animate) {
+                      typeText(message.text, agentEl);
+                    } else {
+                      agentEl.textContent = message.text;
                     }
                   }
                   break;
-                case 'showSuccess':
-                  const successMsg = document.getElementById('success-message');
-                  if (successMsg) {
-                    successMsg.classList.add('visible');
+                case 'appendTranscript':
+                  if (message.target === 'prompt-output') {
+                    const promptEl = document.getElementById('prompt-output');
+                    promptEl.textContent += message.text;
+                    promptEl.scrollTop = promptEl.scrollHeight;
                   }
                   break;
+                case 'showSuccess':
+                  document.getElementById('success-message').classList.add('visible');
+                  break;
                 case 'populatePrompts':
-                  populatePromptDropdown(message.prompts)
-                  break
+                  populatePromptDropdown(message.prompts);
+                  break;
                 case 'setCurrentPrompt':
-                  const select = document.getElementById('prompt-select')
-                  if (select) select.value = message.id
-                  break
+                  document.getElementById('prompt-select').value = message.id;
+                  break;
+                case 'updateVisualizerState':
+                  currentState = message.state;
+                  if (currentMode === 'vibe' && !animationFrame) {
+                    animateMatrix();
+                  } else if (currentState === 'disabled') {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                  }
+                  break;
               }
             });
 
@@ -671,28 +570,45 @@ export class ModeManagerService {
               document.querySelectorAll('.mode-button').forEach(btn => {
                 btn.classList.toggle('active', btn.textContent.toLowerCase() === mode);
               });
-              document.querySelectorAll('.vibe-mode, .code-mode').forEach(div => {
-                div.classList.toggle('active', div.className.includes(mode));
-              });
+              const vibeOverlay = document.getElementById('vibe-overlay');
+              const codeOverlay = document.getElementById('code-overlay');
+              vibeOverlay.classList.toggle('inactive', mode !== 'vibe');
+              codeOverlay.classList.toggle('inactive', mode !== 'code');
             }
 
             function populatePromptDropdown(prompts) {
-              const select = document.getElementById('prompt-select')
-              if (!select) return
-              
-              select.innerHTML = ''
+              const select = document.getElementById('prompt-select');
+              select.innerHTML = '';
               prompts.forEach(prompt => {
-                const option = document.createElement('option')
-                option.value = prompt.id
-                option.textContent = prompt.name
-                select.appendChild(option)
-              })
-
+                const option = document.createElement('option');
+                option.value = prompt.id;
+                option.textContent = prompt.name;
+                select.appendChild(option);
+              });
               select.addEventListener('change', () => {
-                const selectedId = select.value
-                vscode.postMessage({ type: 'setPrompt', id: selectedId })
-              })
+                vscode.postMessage({ type: 'setPrompt', id: select.value });
+              });
             }
+
+            // Typing animation
+            function typeText(text, element, speed = 5) {
+              let i = 0;
+              element.textContent = '';
+              let buffer = '';
+              
+              function type() {
+                if (i < text.length) {
+                  buffer += text.charAt(i);
+                  element.textContent = buffer;
+                  i++;
+                  requestAnimationFrame(type);
+                }
+              }
+              
+              requestAnimationFrame(type);
+            }
+
+            updateModeUI('${this.currentMode}');
           </script>
         </body>
       </html>
@@ -701,10 +617,7 @@ export class ModeManagerService {
 
   private setupMessageHandling() {
     if (!this.panel) return
-
-    // Initial setup of prompts
     this.refreshPrompts()
-
     this.panel.webview.onDidReceiveMessage(async message => {
       console.log('Received message:', message)
       switch (message.type) {
@@ -716,42 +629,23 @@ export class ModeManagerService {
           break
         case 'setPrompt':
           await this.promptManager.setCurrentPrompt(message.id)
-          this.refreshPrompts() // Refresh after changing prompt
+          this.refreshPrompts()
           break
       }
     })
   }
 
   async setMode(mode: Mode) {
-    console.log(`setMode called with mode: ${mode}, current mode: ${this.currentMode}`)
-    if (mode === this.currentMode) return
-
-    // Cleanup current mode
-    if (this.currentMode === 'vibe') {
-      console.log('Cleaning up vibe mode...')
-      await this.voiceAgentService.cleanup()
-      console.log('Vibe mode cleanup complete')
-    } else {
-      console.log('Cleaning up code mode...')
-      await this.deepgramService.stopDictation()
-      console.log('Code mode cleanup complete')
-    }
-
-    this.currentMode = mode
-    console.log(`Mode switched to: ${mode}`)
-    
-    // Initialize new mode
+    console.log('Setting mode to:', mode)
     if (mode === 'vibe') {
       console.log('Starting vibe mode...')
       await this.voiceAgentService.startAgent()
       console.log('Vibe mode started')
+    } else if (this.currentMode === 'code' && this.isDictationActive) {
+      await this.stopDictation()
     }
-
-    // Update UI
-    this.panel?.webview.postMessage({ 
-      type: 'updateMode', 
-      mode: this.currentMode 
-    })
+    this.currentMode = mode
+    this.panel?.webview.postMessage({ type: 'updateMode', mode })
   }
 
   show() {
@@ -759,7 +653,6 @@ export class ModeManagerService {
     if (!this.isInitialized) {
       throw new Error('Mode manager not initialized')
     }
-    
     if (!this.panel) {
       this.createPanel()
     }
@@ -767,11 +660,11 @@ export class ModeManagerService {
   }
 
   private cleanup() {
-    if (this.currentMode === 'vibe')
+    if (this.currentMode === 'vibe') {
+      this.voiceAgentService.setAgentPanel(undefined)
       this.voiceAgentService.cleanup()
-    else if (this.isDictationActive)
+    } else if (this.isDictationActive)
       this.deepgramService.stopDictation()
-      
     this.panel = undefined
   }
 
@@ -795,16 +688,13 @@ export class ModeManagerService {
       console.log('Dictation already active, ignoring start request')
       return
     }
-
     try {
       this.isDictationActive = true
-      this.transcriptBuffer = ''
-      
+      this.finalTranscripts = []
+      this.interimTranscript = ''
       console.log('Starting dictation in DeepgramService...')
       await this.deepgramService.startDictation()
       console.log('Dictation started successfully')
-
-      // Update UI
       this.panel?.webview.postMessage({ 
         type: 'updateStatus', 
         text: 'Recording...',
@@ -825,27 +715,22 @@ export class ModeManagerService {
     console.log('Stopping dictation')
     if (!this.isDictationActive) return
     this.isDictationActive = false
-
     try {
       await this.deepgramService.stopDictation()
-
-      if (this.transcriptBuffer.trim()) {
+      const haveAnyTranscript = this.finalTranscripts.length > 0 || this.interimTranscript.trim()
+      if (haveAnyTranscript) {
         this.panel?.webview.postMessage({ 
           type: 'updateStatus', 
           text: 'Processing...',
           target: 'code-status'
         })
-
-        // Clear previous prompt output
         this.panel?.webview.postMessage({
           type: 'updateTranscript',
           text: '',
           target: 'prompt-output'
         })
-
-        // Stream the response
         const streamResponse = await this.llmService.streamProcessText({
-          text: this.transcriptBuffer,
+          text: this.finalTranscripts.join(' ') + ' ' + this.interimTranscript,
           prompt: this.promptManager.getCurrentPrompt(),
           onToken: (token: string) => {
             this.panel?.webview.postMessage({
@@ -855,20 +740,18 @@ export class ModeManagerService {
             })
           }
         })
-
         if (streamResponse.error) {
           vscode.window.showErrorMessage(streamResponse.error)
         } else {
           await vscode.env.clipboard.writeText(streamResponse.text)
-          // Show success message
-          this.panel?.webview.postMessage({
-            type: 'showSuccess'
-          })
+          this.panel?.webview.postMessage({ type: 'showSuccess' })
         }
       }
     } catch (error) {
       console.error('Failed to stop dictation:', error)
     } finally {
+      this.finalTranscripts = []
+      this.interimTranscript = ''
       this.panel?.webview.postMessage({ 
         type: 'updateStatus', 
         text: 'Ready',
@@ -877,25 +760,19 @@ export class ModeManagerService {
     }
   }
 
-  // Add a method to refresh the prompts in the webview
   private refreshPrompts() {
     if (!this.panel) return
-    
-    // Send updated prompts list
     this.panel.webview.postMessage({
       type: 'populatePrompts',
       prompts: [this.promptManager.getDefaultPrompt(), ...this.promptManager.getAllPrompts()]
     })
-
-    // Update selected prompt
     this.panel.webview.postMessage({
       type: 'setCurrentPrompt',
       id: this.promptManager.getCurrentPrompt().id
     })
   }
 
-  // Add a method to be called when prompts are modified
   public refreshWebviewPrompts() {
     this.refreshPrompts()
   }
-} 
+}

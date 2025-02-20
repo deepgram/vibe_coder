@@ -333,4 +333,8 @@ export class AgentPanel {
       })
     }
   }
+
+  public postMessage(message: unknown): Thenable<boolean> | undefined {
+    return this.panel?.webview.postMessage(message)
+  }
 } 
