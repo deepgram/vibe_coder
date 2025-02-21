@@ -19,6 +19,11 @@ export interface CommandDefinition {
     description: string
     required: boolean
   }[]
+  parameters?: {
+    type: string
+    properties: Record<string, unknown>
+    required?: string[]
+  }
 }
 
 export class CommandRegistryService {
@@ -118,6 +123,23 @@ export class CommandRegistryService {
       command: "workbench.view.scm",
       category: "git",
       description: "Open the source control panel"
+    },
+    {
+      name: 'generateProjectSpec',
+      command: 'vibe-coder.generateProjectSpec',
+      category: 'workspace',
+      description: 'Generate a structured project specification from our conversation',
+      parameters: {
+        type: 'object',
+        properties: {
+          format: {
+            type: 'string',
+            enum: ['markdown'],
+            description: 'Output format (currently only supports markdown)'
+          }
+        },
+        required: ['format']
+      }
     }
   ]
 
@@ -164,5 +186,9 @@ export class CommandRegistryService {
 
   getCommandDefinitions(): CommandDefinition[] {
     return this.commands
+  }
+
+  public registerCommand(command: CommandDefinition) {
+    this.commands.push(command)
   }
 } 

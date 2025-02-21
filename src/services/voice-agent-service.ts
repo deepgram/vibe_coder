@@ -10,6 +10,8 @@ import { LLMService } from './llm-service'
 import { EventEmitter } from 'events'
 import { CommandRegistryService } from './command-registry-service'
 import { WorkspaceService } from './workspace-service'
+import { ConversationLoggerService } from './conversation-logger-service'
+import { SpecGeneratorService } from './spec-generator-service'
 
 interface AgentConfig {
   type: 'SettingsConfiguration'
@@ -40,16 +42,21 @@ interface AgentConfig {
         parameters: {
           type: 'object'
           properties: {
-            name: {
+            name?: {
               type: string
               description: string
             }
-            args: {
+            args?: {
               type: 'array'
               description: string
               items: {
                 type: string
               }
+            }
+            format?: {
+              type: string
+              enum?: string[]
+              description: string
             }
           }
           required: string[]
@@ -58,6 +65,8 @@ interface AgentConfig {
     }
     speak: {
       model: string
+      temp?: number
+      rep_penalty?: number
     }
   }
 }
@@ -114,18 +123,59 @@ export class VoiceAgentService {
   private commandRegistry: CommandRegistryService
   private workspaceService: WorkspaceService
   private agentPanel: MessageHandler | undefined = undefined
+  private conversationLogger: ConversationLoggerService
+  private specGenerator: SpecGeneratorService
+  private context: vscode.ExtensionContext
+  private updateStatus: (status: string) => void
+  private updateTranscript: (text: string) => void
 
-  constructor(
-    private context: vscode.ExtensionContext,
-    private updateStatus: (status: string) => void,
-    private updateTranscript: (text: string) => void,
-    agentPanel?: MessageHandler
-  ) {
-    this.promptManager = new PromptManagementService(context)
+  constructor({
+    context,
+    updateStatus,
+    updateTranscript,
+    conversationLogger
+  }: {
+    context: vscode.ExtensionContext
+    updateStatus: (status: string) => void
+    updateTranscript: (text: string) => void
+    conversationLogger: ConversationLoggerService
+  }) {
+    this.context = context
+    this.updateStatus = updateStatus
+    this.updateTranscript = updateTranscript
+    this.conversationLogger = conversationLogger
+
+    // Assign llmService first
     this.llmService = new LLMService(context)
+
+    // Then create specGenerator
+    this.specGenerator = new SpecGeneratorService(this.llmService, this.conversationLogger)
+
+    this.promptManager = new PromptManagementService(context)
     this.commandRegistry = new CommandRegistryService()
     this.workspaceService = new WorkspaceService()
-    this.agentPanel = agentPanel
+
+    // Comment out or remove agentPanel if unused
+    // this.agentPanel = agentPanel
+
+    // Use the public method to register the command
+    this.commandRegistry.registerCommand({
+      name: 'generateProjectSpec',
+      command: 'vibe-coder.generateProjectSpec',
+      category: 'workspace',
+      description: 'Generate a structured project specification from our conversation',
+      parameters: {
+        type: 'object',
+        properties: {
+          format: {
+            type: 'string',
+            enum: ['markdown'],
+            description: 'Output format (currently only supports markdown)'
+          }
+        },
+        required: ['format']
+      }
+    })
   }
 
   async initialize(): Promise<void> {
@@ -166,11 +216,10 @@ export class VoiceAgentService {
       })
 
       this.ws.on('message', async (data: WebSocket.Data) => {
-        // First try to parse as JSON
         try {
           const message = JSON.parse(data.toString()) as AgentMessage
-          console.log('Parsed message:', JSON.stringify(message, null, 2))
-          
+          console.log('WebSocket received message:', message)
+
           switch (message.type) {
             case 'Welcome':
               console.log('Received Welcome, sending configuration...')
@@ -188,6 +237,14 @@ export class VoiceAgentService {
               this.updateTranscript(message.text || '')
               break
             case 'AgentResponse':
+              console.log('Agent response received:', message)
+              if (message.text) {
+                console.log('Logging agent response from WebSocket')
+                this.conversationLogger.logEntry({
+                  role: 'assistant',
+                  content: message.text
+                })
+              }
               this.updateTranscript(message.text || '')
               if (message.audio) {
                 this.playAudioResponse(message.audio)
@@ -195,6 +252,15 @@ export class VoiceAgentService {
               break
             case 'FunctionCallRequest':
               console.log('Function call requested:', message)
+              if (message.function_name === 'generateProjectSpec') {
+                try {
+                  console.log('Generating project spec...')
+                  await this.specGenerator.generateSpec()
+                  console.log('Project spec generated successfully')
+                } catch (error) {
+                  console.error('Failed to generate project spec:', error)
+                }
+              }
               if (!message.function_name || !message.function_call_id) {
                 console.error('Invalid function call message')
                 break
@@ -228,6 +294,14 @@ export class VoiceAgentService {
               console.log('Function calling debug:', message)
               break
             case 'ConversationText':
+              console.log('Conversation text received:', message)
+              if (message.role && message.content) {
+                console.log('Logging conversation entry from WebSocket')
+                this.conversationLogger.logEntry({
+                  role: message.role,
+                  content: message.content
+                })
+              }
               if (message.role === 'assistant') {
                 this.agentPanel?.postMessage({
                   type: 'updateTranscript',
@@ -264,6 +338,7 @@ export class VoiceAgentService {
               console.log('Unknown message type:', message.type)
           }
         } catch (e) {
+          console.error('Error handling WebSocket message:', e)
           // If it's not JSON, it's raw audio data
           if (data instanceof Buffer) {
             this.handleRawAudio(data)
@@ -378,11 +453,30 @@ export class VoiceAgentService {
   }
 
   async handleFunctionCall(functionCallId: string, func: any) {
+    console.log('Handling function call:', { functionCallId, func })
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket not connected')
       throw new Error('Agent not connected')
     }
 
+    if (func.name === 'generateProjectSpec') {
+      console.log('Generating project spec...')
+      try {
+        await this.specGenerator.generateSpec()
+        console.log('Project spec generated successfully')
+        return { success: true }
+      } catch (error) {
+        console.error('Failed to generate project spec:', error)
+        return { 
+          success: false, 
+          error: (error as Error).message 
+        }
+      }
+    }
+
     if (func.name === 'execute_command') {
+      console.log('Handling execute_command function call:', func)
       const args = JSON.parse(func.arguments)
       try {
         await this.commandRegistry.executeCommand(args.name, args.args)
@@ -396,56 +490,11 @@ export class VoiceAgentService {
       }
     }
 
-    if (func.name === 'process_dictation') {
-      const args = JSON.parse(func.arguments)
-      let prompt
-      
-      try {
-        // First try to get the specified prompt
-        if (args.promptId) {
-          prompt = this.promptManager.getPromptById(args.promptId)
-        }
-        
-        // If no promptId specified or prompt not found, use default
-        if (!prompt) {
-          prompt = {
-            id: 'default',
-            name: 'Default',
-            prompt: `You are providing prompts to Cursor, an AI-powered coding assistant.
-
-You are given a natural language description of what the user wants to do.
-
-You need to take that description and provide a detailed prompt that will help Cursor understand the user's intent and write the code to accomplish the task. 
-
-You should anticipate that Cursor may hallucinate, so you should provide a detailed prompt that breaks the users request into smaller, more manageable steps.`
-          }
-        }
-
-        const result = await this.llmService.processText({ 
-          text: args.text,
-          prompt 
-        })
-        
-        if (result.error) {
-          window.showErrorMessage(result.error)
-          await env.clipboard.writeText(args.text)
-          this.updateTranscript(`Error: ${result.error}\nFalling back to original text:\n${args.text}`)
-          return { success: false, error: result.error }
-        }
-
-        await env.clipboard.writeText(result.text)
-        this.updateTranscript(result.text)
-        return { success: true, text: result.text }
-      } catch (error) {
-        console.error('Error processing dictation:', error)
-        return { 
-          success: false, 
-          error: `Failed to process dictation: ${(error as Error).message}` 
-        }
-      }
+    console.error('Unknown function:', func.name)
+    return { 
+      success: false, 
+      error: `Unknown function: ${func.name}` 
     }
-
-    throw new Error(`Unknown function: ${func.name}`)
   }
 
   private handleRawAudio(data: Buffer) {
@@ -500,6 +549,7 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
 
           When a user requests an action that matches a VS Code command, use the execute_command function.
           You can help users navigate the file structure and open files using the paths shown above.
+          You can also generate project specifications from our conversation using the generateProjectSpec function.
           Provide helpful feedback about what you're doing and guide users if they need help.`,
           functions: [
             {
@@ -514,7 +564,7 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
                   },
                   args: {
                     type: 'array',
-                    description: 'Optional arguments for the command',
+                    description: 'Arguments for the command',
                     items: {
                       type: 'string'
                     }
@@ -522,11 +572,28 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
                 },
                 required: ['name']
               }
+            },
+            {
+              name: 'generateProjectSpec',
+              description: 'Generate a project specification document from the conversation history',
+              parameters: {
+                type: 'object',
+                properties: {
+                  format: {
+                    type: 'string',
+                    enum: ['markdown'],
+                    description: 'Output format (currently only supports markdown)'
+                  }
+                },
+                required: ['format']
+              }
             }
           ]
         },
         speak: {
-          model: 'aura-asteria-en'
+          model: 'aura-2-speaker-180',
+          temp: 0.45,
+          rep_penalty: 2.0
         }
       }
     }
@@ -558,6 +625,102 @@ You should anticipate that Cursor may hallucinate, so you should provide a detai
 
   public setAgentPanel(handler: MessageHandler | undefined) {
     this.agentPanel = handler
+  }
+
+  private async handleMessage(message: any) {
+    if (message.type === 'text') {
+      console.log('VoiceAgent: Received user message:', message.text)
+      
+      // Log user messages
+      this.conversationLogger.logEntry({ 
+        role: 'user', 
+        content: message.text 
+      })
+      console.log('VoiceAgent: Logged user message to conversation')
+      
+      // Send to agent and handle response
+      const response = await this.sendToAgent(message.text)
+      console.log('VoiceAgent: Got response from agent:', response)
+      
+      // Log assistant responses
+      if (response.text) {
+        console.log('VoiceAgent: Logging assistant response')
+        this.conversationLogger.logEntry({ 
+          role: 'assistant', 
+          content: response.text 
+        })
+      }
+      
+      // Update UI with response
+      this.updateTranscript(response.text || 'No response from agent')
+    }
+    // ... rest of the message handling
+  }
+
+  private async handleAgentResponse(response: any) {
+    console.log('VoiceAgent: Handling agent response:', response)
+    
+    // Log the agent's response before handling function calls
+    if (response.text) {
+      console.log('VoiceAgent: Logging agent response to conversation')
+      this.conversationLogger.logEntry({
+        role: 'assistant',
+        content: response.text
+      })
+    }
+
+    if (response.function_call?.name === 'generateProjectSpec') {
+      try {
+        await this.specGenerator.generateSpec()
+        const successMessage = 'Project specification has been generated and saved to project_spec.md'
+        this.updateTranscript(successMessage)
+        // Log the success message as well
+        this.conversationLogger.logEntry({
+          role: 'assistant',
+          content: successMessage
+        })
+      } catch (err) {
+        const error = err as Error
+        const errorMessage = `Error generating spec: ${error?.message || 'Unknown error'}`
+        this.updateTranscript(errorMessage)
+        // Log the error message
+        this.conversationLogger.logEntry({
+          role: 'assistant',
+          content: errorMessage
+        })
+      }
+    }
+  }
+
+  private async sendToAgent(text: string) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('Agent not connected')
+    }
+
+    const message = {
+      type: 'UserText',
+      text
+    }
+
+    this.ws.send(JSON.stringify(message))
+
+    // Return a promise that resolves when we get a response
+    return new Promise<{ text?: string }>((resolve) => {
+      const messageHandler = (data: WebSocket.Data) => {
+        const response = JSON.parse(data.toString())
+        if (response.type === 'AgentResponse') {
+          // Use optional chaining and ensure ws exists before removing listener
+          this.ws?.off('message', messageHandler)
+          resolve({ text: response.text })
+        }
+      }
+      // Add null check before adding event listener
+      if (this.ws) {
+        this.ws.on('message', messageHandler)
+      } else {
+        resolve({ text: 'Error: WebSocket connection lost' })
+      }
+    })
   }
 }
 

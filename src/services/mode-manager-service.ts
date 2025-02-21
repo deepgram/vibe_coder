@@ -4,6 +4,8 @@ import { VoiceAgentService } from './voice-agent-service'
 import { LLMService } from './llm-service'
 import { PromptManagementService } from './prompt-management-service'
 import { CommandRegistryService } from './command-registry-service'
+import { ConversationLoggerService } from './conversation-logger-service'
+import { SpecGeneratorService } from './spec-generator-service'
 
 export type Mode = 'vibe' | 'code'
 
@@ -19,31 +21,37 @@ export class ModeManagerService {
   private interimTranscript = ''
   private isDictationActive = false
   private commandRegistry: CommandRegistryService
+  private readonly conversationLogger: ConversationLoggerService
+  private readonly specGenerator: SpecGeneratorService
 
   constructor(private context: vscode.ExtensionContext) {
     console.log('ModeManagerService constructor')
-    this.deepgramService = new DeepgramService(context)
+    this.conversationLogger = new ConversationLoggerService(context)
+    this.llmService = new LLMService(context)
+    this.specGenerator = new SpecGeneratorService(this.llmService, this.conversationLogger)
     
-    // Pass update functions to VoiceAgentService
-    this.voiceAgentService = new VoiceAgentService(
+    // Initialize new services
+    this.deepgramService = new DeepgramService(context)
+    this.voiceAgentService = new VoiceAgentService({
       context,
-      (status: string) => {
+      updateStatus: (status: string) => {
         this.panel?.webview.postMessage({ 
           type: 'updateStatus', 
           text: status,
           target: 'vibe-status'
         })
       },
-      (text: string) => {
+      updateTranscript: (text: string) => {
+        this.conversationLogger.logEntry({ role: 'assistant', content: text })
         this.panel?.webview.postMessage({ 
           type: 'updateTranscript', 
           text,
           target: 'agent-transcript'
         })
-      }
-    )
+      },
+      conversationLogger: this.conversationLogger
+    })
     
-    this.llmService = new LLMService(context)
     this.promptManager = new PromptManagementService(context)
     this.promptManager.setOnPromptsChanged(() => this.refreshWebviewPrompts())
 
@@ -729,6 +737,8 @@ export class ModeManagerService {
           text: '',
           target: 'prompt-output'
         })
+        const userText = this.finalTranscripts.join(' ') + ' ' + this.interimTranscript
+        this.conversationLogger.logEntry({ role: 'user', content: userText })
         const streamResponse = await this.llmService.streamProcessText({
           text: this.finalTranscripts.join(' ') + ' ' + this.interimTranscript,
           prompt: this.promptManager.getCurrentPrompt(),
