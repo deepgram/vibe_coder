@@ -9,60 +9,83 @@ export interface FileTreeNode {
 }
 
 export class WorkspaceService {
-  async getFileTree(): Promise<FileTreeNode[]> {
-    const workspaceFolders = vscode.workspace.workspaceFolders
+  // Add an array of directories to ignore
+  private readonly ignoredDirectories = [
+    'node_modules',
+    'venv',
+    '.venv',
+    'env',
+    '.env',
+    'dist',
+    'build',
+    '.git',
+    '.github',
+    '.idea',
+    '.vscode',
+    '__pycache__',
+    'coverage',
+    '.next',
+    '.nuxt',
+    'out',
+    'target',
+    'vendor',
+    'tmp',
+    'temp',
+    '.DS_Store'
+  ]
 
-    if (!workspaceFolders) return []
+  async getFileTree(): Promise<vscode.Uri[]> {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]
+    if (!workspaceRoot) return []
 
-    const trees = await Promise.all(
-      workspaceFolders.map(folder => this.buildFileTree(folder.uri))
-    )
+    const pattern = new vscode.RelativePattern(workspaceRoot, '**/*')
+    const files = await vscode.workspace.findFiles(pattern)
 
-    return trees
+    // Filter out files from ignored directories
+    return files.filter(file => {
+      const relativePath = vscode.workspace.asRelativePath(file)
+      return !this.ignoredDirectories.some(dir => 
+        relativePath.startsWith(dir + '/') || relativePath === dir
+      )
+    })
   }
 
-  private async buildFileTree(uri: vscode.Uri): Promise<FileTreeNode> {
-    const stat = await vscode.workspace.fs.stat(uri)
-    const name = path.basename(uri.fsPath)
-    const relativePath = vscode.workspace.asRelativePath(uri.fsPath)
+  formatFileTree(files: vscode.Uri[]): string {
+    if (!files.length) return 'No files found'
 
-    if (stat.type === vscode.FileType.File) {
-      return {
-        name,
-        type: 'file',
-        path: relativePath
-      }
-    }
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]
+    if (!workspaceRoot) return 'No workspace root found'
 
-    const entries = await vscode.workspace.fs.readDirectory(uri)
-    const children = await Promise.all(
-      entries
-        .filter(([name]) => !name.startsWith('.')) // Skip hidden files
-        .map(async ([name]) => {
-          const childUri = vscode.Uri.joinPath(uri, name)
-          return this.buildFileTree(childUri)
-        })
-    )
-
-    return {
-      name,
-      type: 'directory',
-      path: relativePath,
-      children
-    }
-  }
-
-  formatFileTree(tree: FileTreeNode[], indent = ''): string {
-    return tree.map(node => {
-      if (node.type === 'file') 
-        return `${indent}📄 ${node.path}`
+    // Create a tree structure
+    const tree: { [key: string]: any } = {}
+    
+    files.forEach(file => {
+      const relativePath = vscode.workspace.asRelativePath(file)
+      const parts = relativePath.split('/')
+      let current = tree
       
-      return [
-        `${indent}📁 ${node.path}`,
-        ...(node.children || []).map(child => 
-          this.formatFileTree([child], `${indent}  `)
-        )
-      ].join('\n')
-    }).join('\n')
+      parts.forEach((part, i) => {
+        if (i === parts.length - 1) {
+          current[part] = null // leaf node
+        } else {
+          current[part] = current[part] || {}
+          current = current[part]
+        }
+      })
+    })
+
+    // Format the tree as a string
+    const formatNode = (node: any, prefix = ''): string => {
+      if (!node) return ''
+      
+      return Object.entries(node).map(([name, children]) => {
+        if (children === null) {
+          return `${prefix}${name}`
+        }
+        return `${prefix}${name}/\n${formatNode(children, prefix + '  ')}`
+      }).join('\n')
+    }
+
+    return formatNode(tree)
   }
 } 

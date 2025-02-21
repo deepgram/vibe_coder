@@ -645,13 +645,23 @@ export class ModeManagerService {
 
   async setMode(mode: Mode) {
     console.log('Setting mode to:', mode)
+    
+    // Clean up previous mode
+    if (this.currentMode === 'vibe' && mode === 'code') {
+      console.log('Cleaning up vibe mode...')
+      // Stop the voice agent and audio
+      this.voiceAgentService.cleanup()
+    } else if (this.currentMode === 'code' && this.isDictationActive) {
+      await this.stopDictation()
+    }
+
+    // Set up new mode
     if (mode === 'vibe') {
       console.log('Starting vibe mode...')
       await this.voiceAgentService.startAgent()
       console.log('Vibe mode started')
-    } else if (this.currentMode === 'code' && this.isDictationActive) {
-      await this.stopDictation()
     }
+
     this.currentMode = mode
     this.panel?.webview.postMessage({ type: 'updateMode', mode })
   }

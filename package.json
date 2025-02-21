@@ -110,5 +110,6 @@
     "speex-resampler": "^3.0.1",
     "ws": "^8.16.0",
     "zod": "^3.22.4"
-  }
+  },
+  "license": "MIT"
 }

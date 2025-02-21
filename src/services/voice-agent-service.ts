@@ -85,6 +85,7 @@ interface AgentMessage {
     | 'AgentAudioDone'
     | 'Error'
     | 'Close'
+    | 'SettingsApplied'
   session_id?: string
   text?: string
   is_final?: boolean
@@ -196,6 +197,9 @@ export class VoiceAgentService {
     if (!this.isInitialized) 
       throw new Error('Voice Agent not initialized')
 
+    // Ensure cleanup of any existing connection first
+    this.cleanup()
+
     try {
       this.updateStatus('Connecting to agent...')
 
@@ -211,10 +215,22 @@ export class VoiceAgentService {
         }
       )
 
-      this.ws.on('open', () => {
-        console.log('WebSocket connection opened')
+      // Wait for connection to be established
+      await new Promise<void>((resolve, reject) => {
+        if (!this.ws) return reject(new Error('WebSocket not initialized'))
+        
+        this.ws.on('open', () => {
+          console.log('WebSocket connection opened')
+          resolve()
+        })
+        
+        this.ws.on('error', (error) => {
+          console.error('WebSocket connection error:', error)
+          reject(error)
+        })
       })
 
+      // Set up message handler after connection is established
       this.ws.on('message', async (data: WebSocket.Data) => {
         try {
           const message = JSON.parse(data.toString()) as AgentMessage
@@ -226,9 +242,15 @@ export class VoiceAgentService {
               const config = await this.getAgentConfig()
               console.log('Sending configuration:', JSON.stringify(config, null, 2))
               this.ws?.send(JSON.stringify(config))
+              this.updateStatus('Configuring agent...')
+              break
+
+            case 'SettingsApplied':
+              console.log('Settings applied, setting up microphone...')
               this.setupMicrophone()
               this.updateStatus('Connected! Start speaking...')
               break
+
             case 'Ready':
               console.log('Agent ready to receive audio')
               this.updateStatus('Ready! Start speaking...')
@@ -252,39 +274,31 @@ export class VoiceAgentService {
               break
             case 'FunctionCallRequest':
               console.log('Function call requested:', message)
-              if (message.function_name === 'generateProjectSpec') {
-                try {
-                  console.log('Generating project spec...')
-                  await this.specGenerator.generateSpec()
-                  console.log('Project spec generated successfully')
-                } catch (error) {
-                  console.error('Failed to generate project spec:', error)
-                }
-              }
-              if (!message.function_name || !message.function_call_id) {
-                console.error('Invalid function call message')
-                break
-              }
               try {
                 const result = await this.handleFunctionCall(
-                  message.function_call_id,
+                  message.function_call_id!,
                   {
                     name: message.function_name,
                     arguments: JSON.stringify(message.input)
                   }
                 )
+
                 const response = {
                   type: 'FunctionCallResponse',
                   function_call_id: message.function_call_id,
                   output: JSON.stringify(result)
                 }
+                console.log('Sending function call response:', response)
                 this.ws?.send(JSON.stringify(response))
               } catch (error) {
                 console.error('Function call failed:', error)
                 const errorResponse = {
                   type: 'FunctionCallResponse',
                   function_call_id: message.function_call_id,
-                  error: (error as Error).message
+                  output: JSON.stringify({
+                    success: false,
+                    error: (error as Error).message
+                  })
                 }
                 this.ws?.send(JSON.stringify(errorResponse))
               }
@@ -346,24 +360,19 @@ export class VoiceAgentService {
         }
       })
 
-      this.ws.on('error', (error: Error) => {
-        console.error('WebSocket error:', error)
-        vscode.window.showErrorMessage(`WebSocket error: ${error.message}`)
-        this.cleanup()
-      })
-
-      this.ws.on('close', () => {
-        this.cleanup()
-      })
-
-      // Setup keep-alive after successful connection
-      this.setupKeepAlive()
+      // Set up keep-alive interval
+      this.keepAliveInterval = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.ping()
+        }
+      }, 30000)
 
       // Initialize audio player with correct sample rate
       this.audioPlayer = new AudioPlayer(this.AGENT_SAMPLE_RATE)  // Match agent's rate
 
     } catch (error) {
-      this.cleanup()
+      console.error('Failed to start agent:', error)
+      this.cleanup() // Cleanup on error
       throw error
     }
   }
@@ -388,29 +397,37 @@ export class VoiceAgentService {
     this.updateTranscript(audio.data)
   }
 
-  private setupKeepAlive() {
-    // Send keep-alive message every 30 seconds
-    this.keepAliveInterval = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'KeepAlive' }))
-      }
-    }, 30000)
-  }
-
   public cleanup(): void {
+    console.log('Cleaning up voice agent...')
+    
+    // Close WebSocket connection
+    if (this.ws) {
+      console.log('Closing WebSocket connection...')
+      this.ws.removeAllListeners() // Remove all event listeners
+      this.ws.close()
+      this.ws = null
+    }
+
+    // Clear keep-alive interval
     if (this.keepAliveInterval) {
       clearInterval(this.keepAliveInterval)
       this.keepAliveInterval = null
     }
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
-    }
-    this.updateStatus('Disconnected')
+
+    // Stop audio playback
     if (this.audioPlayer) {
+      console.log('Stopping audio playback...')
       this.audioPlayer.stop()
       this.audioPlayer = null
     }
+
+    // Clear any buffered audio
+    this.audioBuffers = []
+
+    // Update UI status
+    this.updateStatus('Disconnected')
+    
+    console.log('Voice agent cleanup complete')
   }
 
   async updateInstructions(instructions: string) {
@@ -456,7 +473,6 @@ export class VoiceAgentService {
     console.log('Handling function call:', { functionCallId, func })
 
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.error('WebSocket not connected')
       throw new Error('Agent not connected')
     }
 
@@ -464,13 +480,27 @@ export class VoiceAgentService {
       console.log('Generating project spec...')
       try {
         await this.specGenerator.generateSpec()
-        console.log('Project spec generated successfully')
-        return { success: true }
+        const successMessage = 'Project specification has been generated and saved to project_spec.md'
+        this.updateTranscript(successMessage)
+        this.conversationLogger.logEntry({
+          role: 'assistant',
+          content: successMessage
+        })
+        return { 
+          success: true,
+          message: successMessage
+        }
       } catch (error) {
         console.error('Failed to generate project spec:', error)
+        const errorMessage = `Failed to generate project specification: ${(error as Error).message}`
+        this.updateTranscript(errorMessage)
+        this.conversationLogger.logEntry({
+          role: 'assistant',
+          content: errorMessage
+        })
         return { 
           success: false, 
-          error: (error as Error).message 
+          error: errorMessage
         }
       }
     }
@@ -542,7 +572,9 @@ export class VoiceAgentService {
             type: 'open_ai'
           },
           model: 'gpt-4o-mini',
-          instructions: `You are a coding mentor and VS Code assistant. You help users navigate and control VS Code through voice commands.
+          instructions: `You are a coding mentor and VS Code assistant. You help users navigate and control VS Code through voice commands. You also help users think through their product and application. You ask questions, one at a time, using the socratic method to help the user think critically, unless the user explicitly asks you for suggestions or ideas.
+
+          Everything you say will be spoken out load through a TTS system, so do not use markdown or other formatting, and keep your responses concise.
           
           Current Workspace Structure:
           ${formattedTree}
