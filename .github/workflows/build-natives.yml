@@ -74,7 +74,7 @@ jobs:
         
       # Upload prebuilds as artifacts
       - name: Upload Prebuilds
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: prebuilds-${{ runner.os == 'Windows' && 'win32' || runner.os == 'macOS' && 'darwin' || 'linux' }}-${{ matrix.architecture || 'x64' }}
           path: prebuilds/${{ runner.os == 'Windows' && 'win32' || runner.os == 'macOS' && 'darwin' || 'linux' }}-${{ matrix.architecture || 'x64' }}
@@ -110,7 +110,7 @@ jobs:
         
       # Download all prebuilds
       - name: Download All Prebuilds
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: prebuilds-temp
           
@@ -128,7 +128,7 @@ jobs:
         
       # Upload VSIX
       - name: Upload VSIX
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: vibe-coder-extension
           path: "*.vsix"
