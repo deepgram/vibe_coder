@@ -1,11 +1,11 @@
 import * as vscode from 'vscode'
 import { EventEmitter } from 'events'
 import { createClient, LiveTranscriptionEvents, ListenLiveClient } from '@deepgram/sdk'
-import Microphone from 'node-microphone'
+import { MicrophoneWrapper } from '../utils/native-module-wrapper'
 
 interface DictationState {
   isActive: boolean
-  mic: Microphone | null
+  mic: MicrophoneWrapper | null
   wsConnection: ListenLiveClient | null
   statusBarItem: vscode.StatusBarItem
 }
@@ -37,9 +37,9 @@ export class DictationService {
     }
 
     try {
-      console.log('Creating microphone...')
-      const mic = new Microphone()
-      console.log('Microphone instance created')
+      console.log('Creating microphone wrapper...')
+      const mic = new MicrophoneWrapper()
+      console.log('Microphone wrapper instance created')
       
       const audioStream = mic.startRecording()
       console.log('Microphone recording started')
@@ -81,6 +81,11 @@ export class DictationService {
           hasStream: !!audioStream,
           error: error
         })
+        
+        // Show error message to user if it's a command not found error
+        if (error.message?.includes('command') && error.message?.includes('not')) {
+          vscode.window.showErrorMessage(error.message)
+        }
       })
 
       audioStream.on('data', (chunk: Buffer) => {
@@ -105,6 +110,10 @@ export class DictationService {
       console.log('All handlers set up successfully')
     } catch (error) {
       console.error('Error in startDictation:', error)
+      // Show error message to user
+      if (error instanceof Error) {
+        vscode.window.showErrorMessage(`Failed to start dictation: ${error.message}`)
+      }
       throw error
     }
   }

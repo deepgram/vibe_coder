@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src blob: mediastream:; connect-src blob: mediastream:;">
+  <title>Audio Interface</title>
+  <style>
+    body { 
+      background-color: transparent; 
+      margin: 0; 
+      font-family: system-ui, -apple-system, sans-serif;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    .status {
+      margin: 10px 0;
+      padding: 8px 16px;
+      border-radius: 4px;
+      background-color: #f0f0f0;
+      text-align: center;
+    }
+    .error {
+      color: #d32f2f;
+      background-color: #ffebee;
+    }
+    .success {
+      color: #388e3c;
+      background-color: #e8f5e9;
+    }
+    .hidden {
+      display: none;
+    }
+    .permission-button {
+      margin: 20px 0;
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+    }
+    .permission-button:hover {
+      background-color: #45a049;
+    }
+    .permission-button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    .container {
+      text-align: center;
+      max-width: 400px;
+      padding: 20px;
+    }
+    .permission-status {
+      margin-top: 10px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Vibe Coder Audio Interface</h2>
+    <p>This interface requires microphone access to enable voice commands and dictation.</p>
+    
+    <button id="permissionButton" class="permission-button">Enable Microphone</button>
+    
+    <div id="permissionStatus" class="permission-status">Microphone permission: unknown</div>
+    <div id="status" class="status hidden">Ready</div>
+  </div>
+  
+  <script>
+    // Audio context and stream variables
+    let audioContext;
+    let mediaStream;
+    let mediaRecorder;
+    let audioChunks = [];
+    let audioSource;
+    let isRecording = false;
+    const statusEl = document.getElementById('status');
+    const permissionButton = document.getElementById('permissionButton');
+    const permissionStatus = document.getElementById('permissionStatus');
+    
+    // Initialize communication with the extension
+    const vscode = acquireVsCodeApi();
+    
+    // Log function that also sends logs to the extension
+    function log(message, type = 'info') {
+      const logMessage = `[AudioInterface] ${message}`;
+      console.log(logMessage);
+      
+      // Also send logs to extension
+      vscode.postMessage({
+        type: 'log',
+        level: type,
+        message: logMessage
+      });
+    }
+    
+    // Show status message
+    function showStatus(message, isError = false) {
+      statusEl.textContent = message;
+      statusEl.classList.remove('hidden', 'error', 'success');
+      statusEl.classList.add(isError ? 'error' : 'success');
+      
+      // Hide after 5 seconds
+      setTimeout(() => {
+        statusEl.classList.add('hidden');
+      }, 5000);
+    }
+    
+    // Check microphone permission
+    async function checkMicrophonePermission() {
+      try {
+        const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+        updatePermissionStatus(permissionStatus.state);
+        
+        // Send the permission status to the extension
+        vscode.postMessage({ 
+          type: 'permissionStatus', 
+          status: permissionStatus.state 
+        });
+        
+        permissionStatus.onchange = function() {
+          updatePermissionStatus(this.state);
+          
+          // Also send updated status when it changes
+          vscode.postMessage({ 
+            type: 'permissionStatus', 
+            status: this.state 
+          });
+        };
+        
+        return permissionStatus.state;
+      } catch (error) {
+        log(`Error checking permissions: ${error.message}`, 'error');
+        updatePermissionStatus('error');
+        
+        // Send error status to extension
+        vscode.postMessage({ 
+          type: 'permissionStatus', 
+          status: 'error' 
+        });
+        
+        return 'error';
+      }
+    }
+    
+    // Update permission status display
+    function updatePermissionStatus(state) {
+      permissionStatus.textContent = `Microphone permission: ${state}`;
+      
+      if (state === 'granted') {
+        permissionButton.disabled = true;
+        permissionButton.textContent = 'Microphone Enabled';
+        permissionStatus.style.color = '#388e3c';
+        
+        // Notify the extension that microphone is ready
+        vscode.postMessage({ type: 'microphoneReady' });
+      } else if (state === 'denied') {
+        permissionButton.disabled = false;
+        permissionButton.textContent = 'Microphone Access Denied';
+        permissionStatus.style.color = '#d32f2f';
+      } else {
+        permissionButton.disabled = false;
+        permissionButton.textContent = 'Enable Microphone';
+        permissionStatus.style.color = '';
+      }
+    }
+    
+    // Request microphone permission
+    async function requestMicrophonePermission() {
+      log('Requesting microphone permission');
+      showStatus('Requesting microphone access...');
+      
+      try {
+        // Create audio context if it doesn't exist
+        if (!audioContext) {
+          audioContext = new AudioContext();
+          log(`Audio context created, sample rate: ${audioContext.sampleRate}Hz`);
+        }
+        
+        // Request microphone access
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          } 
+        });
+        
+        log('Microphone access granted');
+        showStatus('Microphone access granted', false);
+        
+        // Stop the stream immediately - we just needed permission
+        mediaStream.getTracks().forEach(track => track.stop());
+        
+        // Check permission status again
+        await checkMicrophonePermission();
+        
+        return true;
+      } catch (error) {
+        log(`Failed to get microphone permission: ${error.message}`, 'error');
+        showStatus(`Microphone error: ${error.message}`, true);
+        
+        vscode.postMessage({ 
+          type: 'error', 
+          message: `Failed to get microphone permission: ${error.message}` 
+        });
+        
+        return false;
+      }
+    }
+    
+    // Set up permission button
+    permissionButton.addEventListener('click', async () => {
+      await requestMicrophonePermission();
+    });
+    
+    // Handle messages from the extension
+    window.addEventListener('message', event => {
+      const message = event.data;
+      log(`Received message: ${message.command}`);
+      
+      switch (message.command) {
+        case 'startRecording':
+          startRecording();
+          break;
+        case 'stopRecording':
+          stopRecording();
+          break;
+        case 'playAudio':
+          playAudio(message.data, message.format);
+          break;
+        case 'checkPermission':
+          checkMicrophonePermission();
+          break;
+      }
+    });
+    
+    // Start recording from microphone
+    async function startRecording() {
+      log('Starting recording');
+      
+      if (isRecording) {
+        log('Already recording, stopping first');
+        stopRecording();
+      }
+      
+      // Check permission first
+      const permissionState = await checkMicrophonePermission();
+      if (permissionState !== 'granted') {
+        log('Microphone permission not granted, requesting permission');
+        showStatus('Please enable microphone access', true);
+        
+        // Try to request permission
+        const permissionGranted = await requestMicrophonePermission();
+        if (!permissionGranted) {
+          vscode.postMessage({ 
+            type: 'error', 
+            message: 'Microphone permission denied. Please enable microphone access and try again.' 
+          });
+          return;
+        }
+      }
+      
+      try {
+        // Create audio context if it doesn't exist
+        if (!audioContext) {
+          audioContext = new AudioContext();
+          log(`Audio context created, sample rate: ${audioContext.sampleRate}Hz`);
+        }
+        
+        // Request microphone access
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          } 
+        });
+        
+        log('Got media stream');
+        
+        // Create media recorder
+        mediaRecorder = new MediaRecorder(mediaStream);
+        audioChunks = [];
+        
+        // Set up event handlers
+        mediaRecorder.ondataavailable = event => {
+          if (event.data.size > 0) {
+            audioChunks.push(event.data);
+            
+            // Convert to base64 and send to extension
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const base64data = reader.result.split(',')[1];
+              vscode.postMessage({ 
+                type: 'audioData', 
+                data: base64data 
+              });
+            };
+            reader.readAsDataURL(event.data);
+          }
+        };
+        
+        mediaRecorder.onstart = () => {
+          log('MediaRecorder started');
+          isRecording = true;
+          vscode.postMessage({ type: 'recordingStarted' });
+        };
+        
+        mediaRecorder.onstop = () => {
+          log('MediaRecorder stopped');
+          isRecording = false;
+          vscode.postMessage({ type: 'recordingStopped' });
+        };
+        
+        mediaRecorder.onerror = (event) => {
+          log(`MediaRecorder error: ${event.error}`, 'error');
+          isRecording = false;
+          vscode.postMessage({ 
+            type: 'error', 
+            message: `Recording error: ${event.error}` 
+          });
+        };
+        
+        // Start recording with small timeslices for low latency
+        mediaRecorder.start(100);
+        
+      } catch (error) {
+        log(`Error starting recording: ${error.message}`, 'error');
+        vscode.postMessage({ 
+          type: 'error', 
+          message: `Failed to start recording: ${error.message}` 
+        });
+      }
+    }
+    
+    // Stop recording
+    function stopRecording() {
+      log('Stopping recording');
+      
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        log('MediaRecorder stopped');
+      }
+      
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => {
+          track.stop();
+          log(`Audio track stopped: ${track.kind}`);
+        });
+      }
+      
+      isRecording = false;
+      showStatus('Recording stopped');
+      vscode.postMessage({ type: 'recordingStopped' });
+    }
+    
+    // Play audio from base64 data
+    async function playAudio(base64Data, format) {
+      log(`Playing audio, format: ${format}`);
+      
+      try {
+        if (!audioContext) {
+          audioContext = new AudioContext();
+          log(`Audio context created, sample rate: ${audioContext.sampleRate}Hz`);
+        }
+        
+        // Convert base64 to array buffer
+        const binaryString = atob(base64Data);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        log(`Decoding audio data, size: ${bytes.length} bytes`);
+        showStatus('Playing audio...');
+        
+        // Decode audio data
+        try {
+          const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
+          log(`Audio decoded successfully, duration: ${audioBuffer.duration.toFixed(2)}s`);
+          
+          // Play the audio
+          audioSource = audioContext.createBufferSource();
+          audioSource.buffer = audioBuffer;
+          audioSource.connect(audioContext.destination);
+          audioSource.start();
+          
+          audioSource.onended = () => {
+            log('Audio playback ended');
+            vscode.postMessage({ type: 'playbackEnded' });
+          };
+          
+          vscode.postMessage({ type: 'playbackStarted' });
+        } catch (decodeError) {
+          log(`Failed to decode audio: ${decodeError.message}`, 'error');
+          showStatus(`Audio decode error: ${decodeError.message}`, true);
+          vscode.postMessage({ 
+            type: 'error', 
+            message: `Failed to decode audio: ${decodeError.message}` 
+          });
+        }
+      } catch (error) {
+        log(`Failed to play audio: ${error.message}`, 'error');
+        showStatus(`Audio playback error: ${error.message}`, true);
+        vscode.postMessage({ 
+          type: 'error', 
+          message: `Failed to play audio: ${error.message}` 
+        });
+      }
+    }
+    
+    // Check microphone permission on load
+    checkMicrophonePermission().then(state => {
+      log(`Initial microphone permission state: ${state}`);
+    });
+    
+    // Send ready message to extension
+    log('Audio interface initialized');
+    vscode.postMessage({ type: 'initialized' });
+  </script>
+</body>
+</html> 

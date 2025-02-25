@@ -2,8 +2,11 @@ import * as vscode from 'vscode'
 import WebSocket from 'ws'
 import { createClient } from '@deepgram/sdk'
 // import { AgentPanel } from './agent-panel'
-import Microphone from 'node-microphone'
-import Speaker from 'speaker'
+// Remove these direct imports
+// import Microphone from 'node-microphone'
+// import Speaker from 'speaker'
+// Import our wrappers instead
+import { SpeakerWrapper, MicrophoneWrapper } from '../utils/native-module-wrapper'
 import { PromptManagementService } from './prompt-management-service'
 import { env, window, workspace } from 'vscode'
 import { LLMService } from './llm-service'
@@ -12,6 +15,7 @@ import { CommandRegistryService } from './command-registry-service'
 import { WorkspaceService } from './workspace-service'
 import { ConversationLoggerService } from './conversation-logger-service'
 import { SpecGeneratorService } from './spec-generator-service'
+import { checkNativeModulesCompatibility } from '../utils/binary-loader'
 
 interface AgentConfig {
   type: 'SettingsConfiguration'
@@ -180,6 +184,13 @@ export class VoiceAgentService {
   }
 
   async initialize(): Promise<void> {
+    // Check if native modules are available for this platform
+    const compatibility = checkNativeModulesCompatibility()
+    if (!compatibility.compatible) {
+      vscode.window.showWarningMessage(compatibility.message)
+      console.warn('Native module compatibility check failed:', compatibility)
+    }
+
     const apiKey = await this.context.secrets.get('deepgram.apiKey')
     if (!apiKey) {
       const key = await vscode.window.showInputBox({
@@ -378,19 +389,25 @@ export class VoiceAgentService {
   }
 
   private setupMicrophone() {
-    const mic = new Microphone()
-    const audioStream = mic.startRecording()
+    // Use our wrapper instead of direct microphone
+    const mic = new MicrophoneWrapper()
+    try {
+      const audioStream = mic.startRecording()
 
-    audioStream.on('data', (chunk: Buffer) => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(chunk)
-      }
-    })
+      audioStream.on('data', (chunk: Buffer) => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(chunk)
+        }
+      })
 
-    audioStream.on('error', (error: Error) => {
-      vscode.window.showErrorMessage(`Microphone error: ${error.message}`)
+      audioStream.on('error', (error: Error) => {
+        vscode.window.showErrorMessage(`Microphone error: ${error.message}`)
+        this.cleanup()
+      })
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to start microphone: ${error instanceof Error ? error.message : String(error)}`)
       this.cleanup()
-    })
+    }
   }
 
   private async playAudioResponse(audio: { data: string, encoding: string, sample_rate: number }) {
@@ -756,7 +773,7 @@ export class VoiceAgentService {
   }
 }
 
-// Add AudioPlayer class
+// Replace the AudioPlayer class to use our wrapper
 class AudioPlayer {
   private speaker: SpeakerWrapper
   private bufferedAudio: Buffer[] = []
@@ -765,7 +782,12 @@ class AudioPlayer {
 
   constructor(sampleRate: number) {
     console.log('Initializing speaker with sample rate:', sampleRate)
-    this.speaker = new SpeakerWrapper(sampleRate)
+    // Use our wrapper instead of direct Speaker
+    this.speaker = new SpeakerWrapper({
+      channels: 1,       // Mono
+      bitDepth: 16,      // 16-bit PCM
+      sampleRate,        // Match agent's rate (24kHz)
+    })
     setInterval(() => this.checkAndRefillSpeaker(), 200)
   }
 
@@ -802,20 +824,26 @@ class AudioPlayer {
 
   private refillSpeaker() {
     while (this.bufferedAudio.length && 
-           this.speaker.getBufferedMs() < this.targetSpeakerAudioMs) {
+           this.getBufferedMs() < this.targetSpeakerAudioMs) {
       this.speaker.write(this.bufferedAudio.shift()!)
     }
   }
+  
+  private getBufferedMs(): number {
+    return 0; // TODO: Implement this based on speaker state
+  }
 }
 
-class SpeakerWrapper {
-  private speaker: Speaker
+// Fix the SpeakerWrapper implementation
+class InternalSpeakerWrapper {
+  private speaker: any
   private msPerSample: number
   private lastWriteTime: number
   private bufferedMsAtLastWrite: number
 
   constructor(sampleRate: number) {
-    this.speaker = new Speaker({ 
+    // We'll be using our imported SpeakerWrapper here
+    this.speaker = new SpeakerWrapper({
       channels: 1,       // Mono
       bitDepth: 16,      // 16-bit PCM
       sampleRate,        // Match agent's rate (24kHz)
@@ -829,7 +857,7 @@ class SpeakerWrapper {
     this.bufferedMsAtLastWrite = this.getBufferedMs() + 
       this.getAudioDurationMs(audio)
     this.lastWriteTime = Date.now()
-    this.speaker.write(audio)
+    return this.speaker.write(audio)
   }
 
   getBufferedMs(): number {

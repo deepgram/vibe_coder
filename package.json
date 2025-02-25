@@ -8,7 +8,11 @@
     "node": ">=16.0.0"
   },
   "type": "commonjs",
-  "publisher": "test",
+  "publisher": "Deepgram",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deepgram/vibe_coder"
+  },
   "categories": [
     "Other"
   ],
@@ -88,7 +92,8 @@
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production",
     "check-types": "tsc --noEmit",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "create-prebuild": "node ./scripts/create-prebuild.js"
   },
   "devDependencies": {
     "@types/node": "20.x",
@@ -105,11 +110,15 @@
   "dependencies": {
     "@deepgram/sdk": "^3.0.0",
     "code": "^5.2.4",
-    "node-microphone": "^0.1.6",
     "speaker": "^0.5.5",
     "speex-resampler": "^3.0.1",
     "ws": "^8.16.0",
     "zod": "^3.22.4"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "files": [
+    "out/**/*",
+    "prebuilds/**/*",
+    "README.md"
+  ]
 }

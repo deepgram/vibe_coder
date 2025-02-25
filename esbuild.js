@@ -31,8 +31,7 @@ const buildOptions = {
 	external: [
 		'vscode',
 		// Add native modules to external
-		'speaker',
-		'node-microphone'
+		'speaker'
 	],
 	format: 'cjs',
 	platform: 'node',

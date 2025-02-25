@@ -14,6 +14,7 @@ import * as vscode from 'vscode';
 import { DeepgramService } from './services/deepgram-service'
 import { VoiceAgentService } from './services/voice-agent-service'
 import { ModeManagerService } from './services/mode-manager-service'
+import { MicrophoneWrapper, SpeakerWrapper } from './utils/native-module-wrapper';
 
 // Add type for QuickPick items
 interface PromptQuickPickItem extends vscode.QuickPickItem {
