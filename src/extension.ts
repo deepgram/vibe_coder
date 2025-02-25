@@ -275,6 +275,59 @@ ${prompt.prompt}`
 					break
 				}
 			}
+		}),
+
+		vscode.commands.registerCommand('vibeCoder.listMicrophoneDevices', async () => {
+			try {
+				const micWrapper = new MicrophoneWrapper()
+				await micWrapper.listAvailableDevices()
+			} catch (error) {
+				vscode.window.showErrorMessage(
+					`Failed to list microphone devices: ${error instanceof Error ? error.message : String(error)}`
+				)
+			}
+		}),
+
+		vscode.commands.registerCommand('vibeCoder.testMicrophone', async () => {
+			try {
+				vscode.window.withProgress({
+					location: vscode.ProgressLocation.Notification,
+					title: 'Testing microphone...',
+					cancellable: false
+				}, async (progress) => {
+					const micWrapper = new MicrophoneWrapper()
+					
+					progress.report({ message: 'Recording test audio...' })
+					
+					try {
+						await micWrapper.testMicrophone()
+						vscode.window.showInformationMessage('Microphone test successful! Audio is being captured correctly.')
+					} catch (error) {
+						vscode.window.showErrorMessage(
+							`Microphone test failed: ${error instanceof Error ? error.message : String(error)}`
+						)
+						
+						// Check if this might be a device-related error
+						const errorMessage = error instanceof Error ? error.message : String(error)
+						if (errorMessage.includes('device') || errorMessage.includes('Device')) {
+							vscode.window.showInformationMessage(
+								'This might be a microphone device issue. Would you like to list available devices?',
+								'List Devices'
+							).then(selection => {
+								if (selection === 'List Devices') {
+									micWrapper.listAvailableDevices()
+								}
+							})
+						}
+					} finally {
+						micWrapper.dispose()
+					}
+				})
+			} catch (error) {
+				vscode.window.showErrorMessage(
+					`Failed to test microphone: ${error instanceof Error ? error.message : String(error)}`
+				)
+			}
 		})
 	)
 

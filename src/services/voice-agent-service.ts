@@ -497,51 +497,11 @@ export class VoiceAgentService {
       message
     }
 
-    return new Promise<void>((resolve, reject) => {
-      // Set up a one-time listener for injection refused
-      const refusedHandler = (data: WebSocket.Data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          if (message.type === 'InjectionRefused') {
-            console.log('Message injection refused - user is speaking or agent is responding');
-            this.ws?.removeListener('message', refusedHandler);
-            this.ws?.removeListener('message', doneHandler);
-            reject(new Error('Message injection refused'));
-          }
-        } catch (e) {
-          // Not JSON data, ignore
-        }
-      };
-      
-      // Set up a one-time listener for audio done
-      const doneHandler = (data: WebSocket.Data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          if (message.type === 'AgentAudioDone') {
-            console.log('Agent message injection completed');
-            this.ws?.removeListener('message', refusedHandler);
-            this.ws?.removeListener('message', doneHandler);
-            resolve();
-          }
-        } catch (e) {
-          // Not JSON data, ignore
-        }
-      };
-      
-      // Add the listeners
-      this.ws?.on('message', refusedHandler);
-      this.ws?.on('message', doneHandler);
-      
-      // Send the message
-      this.ws.send(JSON.stringify(injectMessage));
-      
-      // Set a timeout to prevent hanging if we don't get a response
-      setTimeout(() => {
-        this.ws?.removeListener('message', refusedHandler);
-        this.ws?.removeListener('message', doneHandler);
-        resolve(); // Resolve anyway after timeout
-      }, 5000);
-    });
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(injectMessage))
+    } else {
+      console.warn('VoiceAgentService: Cannot send message - WebSocket is not open')
+    }
   }
 
   async handleFunctionCall(functionCallId: string, func: any) {

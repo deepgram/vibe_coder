@@ -52,6 +52,14 @@
       {
         "command": "vibe-coder.managePrompts",
         "title": "Vibe Coder: Manage Dictation Prompts"
+      },
+      {
+        "command": "vibeCoder.listMicrophoneDevices",
+        "title": "Vibe-Coder: List Available Microphone Devices"
+      },
+      {
+        "command": "vibeCoder.testMicrophone",
+        "title": "Vibe-Coder: Test Microphone"
       }
     ],
     "keybindings": [
@@ -82,7 +90,27 @@
         "mac": "alt",
         "when": "!altKey"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Vibe-Coder",
+      "properties": {
+        "vibeCoder.microphone.deviceMacOS": {
+          "type": "string",
+          "default": "",
+          "description": "Microphone device to use on macOS (leave empty for default)"
+        },
+        "vibeCoder.microphone.deviceWindows": {
+          "type": "string",
+          "default": "",
+          "description": "Microphone device to use on Windows (leave empty for default)"
+        },
+        "vibeCoder.microphone.deviceLinux": {
+          "type": "string",
+          "default": "",
+          "description": "Microphone device to use on Linux (leave empty for default, or specify like 'plughw:1,0')"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
