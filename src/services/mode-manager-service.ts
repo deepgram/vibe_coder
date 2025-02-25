@@ -168,6 +168,289 @@ export class ModeManagerService {
       }
     `
 
+    // Use single quotes for the JS to avoid backtick conflicts
+    const audioPlayerJs = `
+    // Audio processing utilities
+    function createAudioBuffer(audioContext, data, sampleRate = 24000) {
+      const audioDataView = new Int16Array(data);
+      if (audioDataView.length === 0) {
+        console.error("Received audio data is empty.");
+        return null;
+      }
+
+      const buffer = audioContext.createBuffer(1, audioDataView.length, sampleRate);
+      const channelData = buffer.getChannelData(0);
+
+      // Convert linear16 PCM to float [-1, 1]
+      for (let i = 0; i < audioDataView.length; i++) {
+        channelData[i] = audioDataView[i] / 32768;
+      }
+
+      return buffer;
+    }
+
+    function playAudioBuffer(audioContext, buffer, startTime, gainNode) {
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(gainNode);
+      
+      const currentTime = audioContext.currentTime;
+      if (startTime < currentTime) {
+        startTime = currentTime;
+      }
+
+      source.start(startTime);
+      return {
+        source,
+        endTime: startTime + buffer.duration
+      };
+    }
+
+    function downsample(buffer, fromSampleRate, toSampleRate) {
+      if (fromSampleRate === toSampleRate) {
+        return buffer;
+      }
+      const sampleRateRatio = fromSampleRate / toSampleRate;
+      const newLength = Math.round(buffer.length / sampleRateRatio);
+      const result = new Float32Array(newLength);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while (offsetResult < result.length) {
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+        let accum = 0,
+          count = 0;
+        for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+          accum += buffer[i];
+          count++;
+        }
+        result[offsetResult] = accum / count;
+        offsetResult++;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return result;
+    }
+
+    // Audio player implementation with explicit sample rate handling
+    class AudioPlayer {
+      constructor() {
+        this.audioContext = null;
+        this.gainNode = null;
+        this.activeSources = [];
+        this.initialized = false;
+        this.audioQueue = [];
+        this.isProcessing = false;
+        this.nextStartTime = 0;
+      }
+      
+      init() {
+        if (this.initialized) return;
+        
+        try {
+          this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          console.log('Audio context initialized:', this.audioContext.state, 
+            'Sample rate:', this.audioContext.sampleRate + 'Hz');
+          
+          this.gainNode = this.audioContext.createGain();
+          this.gainNode.connect(this.audioContext.destination);
+          this.gainNode.gain.value = 0.8; // Slightly reduced volume to avoid clipping
+          
+          if (this.audioContext.state === 'suspended') {
+            this.audioContext.resume();
+          }
+          
+          this.initialized = true;
+        } catch (error) {
+          console.error('Failed to initialize audio context:', error);
+          vscode.postMessage({ 
+            type: 'error', 
+            message: 'Failed to initialize audio playback: ' + error.message 
+          });
+        }
+      }
+      
+      base64ToArrayBuffer(base64) {
+        try {
+          const binaryString = window.atob(base64);
+          const bytes = new Uint8Array(binaryString.length);
+          
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          return bytes.buffer;
+        } catch (error) {
+          console.error('Error converting base64 to ArrayBuffer:', error);
+          throw error;
+        }
+      }
+      
+      stopAllAudio() {
+        console.log('Stopping all audio (' + this.activeSources.length + ' sources)');
+        
+        // Stop all currently playing sources
+        this.activeSources.forEach(source => {
+          try {
+            source.stop(0);
+          } catch (e) {
+            // Ignore errors if source already stopped
+          }
+        });
+        
+        this.activeSources = [];
+        
+        // Clear the audio queue
+        this.audioQueue = [];
+        this.isProcessing = false;
+        this.nextStartTime = 0;
+        
+        console.log('All audio stopped');
+      }
+      
+      async processAudioData(rawData, srcSampleRate) {
+        if (!this.initialized) this.init();
+        
+        try {
+          // Convert raw data to Int16Array
+          const int16Data = new Int16Array(rawData);
+          
+          // Create audio buffer directly from the PCM data
+          const audioBuffer = createAudioBuffer(this.audioContext, int16Data, srcSampleRate);
+          
+          if (!audioBuffer) {
+            throw new Error('Failed to create audio buffer: empty data');
+          }
+          
+          console.log('Successfully created audio buffer: ' + 
+            audioBuffer.duration.toFixed(2) + 's, ' + 
+            audioBuffer.numberOfChannels + ' channels, ' + 
+            audioBuffer.sampleRate + 'Hz');
+          
+          return audioBuffer;
+        } catch (error) {
+          console.error('Failed to process audio data:', error);
+          throw error;
+        }
+      }
+      
+      playAudioBuffer(audioBuffer) {
+        if (!this.initialized) this.init();
+        
+        try {
+          const result = playAudioBuffer(
+            this.audioContext, 
+            audioBuffer, 
+            this.nextStartTime,
+            this.gainNode
+          );
+          
+          const source = result.source;
+          this.nextStartTime = result.endTime;
+          
+          // Track all active sources
+          this.activeSources.push(source);
+          
+          source.onended = () => {
+            const index = this.activeSources.indexOf(source);
+            if (index !== -1) {
+              this.activeSources.splice(index, 1);
+            }
+            console.log('Audio playback ended, active sources: ' + this.activeSources.length);
+            
+            // Notify when all audio has finished
+            if (this.activeSources.length === 0) {
+              vscode.postMessage({ type: 'audioEnded' });
+              this.processQueue();
+            }
+          };
+          
+          console.log('Started audio playback, duration: ' + audioBuffer.duration.toFixed(2) + 's');
+          
+          return true;
+        } catch (error) {
+          console.error('Error playing audio:', error);
+          return false;
+        }
+      }
+      
+      // Process audio queue to avoid overlapping playback
+      async processQueue() {
+        if (this.isProcessing || this.audioQueue.length === 0) return;
+        
+        this.isProcessing = true;
+        
+        try {
+          const nextAudio = this.audioQueue.shift();
+          await this.playAudio(nextAudio, true);
+        } finally {
+          this.isProcessing = false;
+          
+          // Continue processing the queue if there are more items
+          if (this.audioQueue.length > 0) {
+            this.processQueue();
+          }
+        }
+      }
+      
+      async playAudio(audioData, bypassQueue = false) {
+        // If we're already processing audio and this isn't a bypass call, queue it
+        if (!bypassQueue && (this.isProcessing || this.activeSources.length > 0)) {
+          console.log('Audio already playing, queueing new audio');
+          this.audioQueue.push(audioData);
+          return;
+        }
+        
+        this.isProcessing = true;
+        
+        if (!this.initialized) this.init();
+        
+        try {
+          console.log('Processing audio data:', {
+            encoding: audioData.encoding,
+            sampleRate: audioData.sampleRate,
+            isRaw: audioData.isRaw
+          });
+          
+          const rawData = this.base64ToArrayBuffer(audioData.data);
+          
+          if (audioData.isRaw) {
+            // For raw PCM data, create an audio buffer directly
+            const audioBuffer = await this.processAudioData(
+              rawData, 
+              audioData.sampleRate
+            );
+            
+            // Play the buffer
+            this.playAudioBuffer(audioBuffer);
+          } else {
+            // For encoded audio data (MP3, WAV, etc.), use the browser's decoder
+            try {
+              const audioBuffer = await this.audioContext.decodeAudioData(rawData);
+              this.playAudioBuffer(audioBuffer);
+            } catch (error) {
+              console.error('Failed to decode audio data:', error);
+              vscode.postMessage({ 
+                type: 'error', 
+                message: 'Failed to decode audio: ' + error.message 
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Audio playback error:', error);
+          vscode.postMessage({ 
+            type: 'error', 
+            message: 'Audio playback error: ' + error.message 
+          });
+        } finally {
+          this.isProcessing = false;
+          this.processQueue();
+        }
+      }
+    }
+    
+    // Create the audio player
+    const audioPlayer = new AudioPlayer();
+    `
+
     return `
       <!DOCTYPE html>
       <html>
@@ -441,14 +724,150 @@ export class ModeManagerService {
             const vscode = acquireVsCodeApi();
             let currentMode = '${this.currentMode}';
             let currentState = 'disabled'; // 'speaking', 'idle', 'disabled'
+            
+            ${audioPlayerJs}
+            
+            // Event listener for messages from the extension
+            window.addEventListener('message', async event => {
+              const message = event.data;
+              
+              switch (message.type) {
+                case 'playAudio':
+                  // Initialize audio context on first audio playback request
+                  if (!audioPlayer.initialized) {
+                    audioPlayer.init();
+                  }
+                  
+                  // Play the audio
+                  audioPlayer.playAudio(message.audio);
+                  break;
+                  
+                case 'stopAudio':
+                  // Stop all audio when requested
+                  audioPlayer.stopAllAudio();
+                  break;
+                  
+                case 'updateVisualizerState':
+                  currentState = message.state;
+                  // If state changes to 'speaking', we're receiving audio
+                  if (currentMode === 'vibe' && !animationFrame) {
+                    animateMatrix();
+                  } else if (currentState === 'disabled') {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                  }
+                  break;
+                
+                case 'updateMode':
+                  currentMode = message.mode;
+                  updateModeUI(message.mode);
+                  if (message.mode === 'vibe' && !animationFrame) {
+                    animateMatrix();
+                  } else if (message.mode === 'code') {
+                    cancelAnimationFrame(animationFrame);
+                    animationFrame = null;
+                  }
+                  break;
+                  
+                case 'updateStatus':
+                  const statusElement = document.getElementById(
+                    message.target === 'code-status' ? 'code-status' : 'vibe-status'
+                  );
+                  if (statusElement) {
+                    statusElement.textContent = message.text;
+                    if (message.target === 'code-status') {
+                      const isRecording = message.text === 'Recording...';
+                      const toggleBtn = document.getElementById('dictation-toggle');
+                      const successMsg = document.getElementById('success-message');
+                      if (toggleBtn) {
+                        toggleBtn.textContent = isRecording ? 'Stop Dictation' : 'Start Dictation';
+                      }
+                      if (isRecording && successMsg) {
+                        successMsg.classList.remove('visible');
+                      }
+                    }
+                  }
+                  break;
+                  
+                case 'updateTranscript':
+                  if (message.target === 'transcript') {
+                    document.getElementById('transcript').textContent = message.text;
+                  } else if (message.target === 'prompt-output') {
+                    const promptEl = document.getElementById('prompt-output');
+                    promptEl.textContent = message.text;
+                    promptEl.scrollTop = promptEl.scrollHeight;
+                  } else if (message.target === 'agent-transcript') {
+                    const agentEl = document.getElementById('agent-transcript');
+                    if (message.animate) {
+                      typeText(message.text, agentEl);
+                    } else {
+                      agentEl.textContent = message.text;
+                    }
+                  }
+                  break;
+                  
+                case 'appendTranscript':
+                  if (message.target === 'prompt-output') {
+                    const promptEl = document.getElementById('prompt-output');
+                    promptEl.textContent += message.text;
+                    promptEl.scrollTop = promptEl.scrollHeight;
+                  }
+                  break;
+                  
+                case 'showSuccess':
+                  document.getElementById('success-message').classList.add('visible');
+                  break;
+                  
+                case 'populatePrompts':
+                  populatePromptDropdown(message.prompts);
+                  break;
+                  
+                case 'setCurrentPrompt':
+                  document.getElementById('prompt-select').value = message.id;
+                  break;
+              }
+            });
 
-            function switchMode(mode) {
-              currentMode = mode;
-              vscode.postMessage({ type: 'switchMode', mode });
+            function updateModeUI(mode) {
+              document.querySelectorAll('.mode-button').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent.toLowerCase() === mode);
+              });
+              const vibeOverlay = document.getElementById('vibe-overlay');
+              const codeOverlay = document.getElementById('code-overlay');
+              vibeOverlay.classList.toggle('inactive', mode !== 'vibe');
+              codeOverlay.classList.toggle('inactive', mode !== 'code');
             }
 
-            function toggleDictation() {
-              vscode.postMessage({ type: 'toggleDictation' });
+            function populatePromptDropdown(prompts) {
+              const select = document.getElementById('prompt-select');
+              select.innerHTML = '';
+              prompts.forEach(prompt => {
+                const option = document.createElement('option');
+                option.value = prompt.id;
+                option.textContent = prompt.name;
+                select.appendChild(option);
+              });
+              select.addEventListener('change', () => {
+                vscode.postMessage({ type: 'setPrompt', id: select.value });
+              });
+            }
+
+            // Typing animation
+            function typeText(text, element, speed = 5) {
+              let i = 0;
+              element.textContent = '';
+              let buffer = '';
+              
+              function type() {
+                if (i < text.length) {
+                  buffer += text.charAt(i);
+                  element.textContent = buffer;
+                  i++;
+                  requestAnimationFrame(type);
+                }
+              }
+              
+              requestAnimationFrame(type);
             }
 
             // Matrix Rain Animation
@@ -498,124 +917,21 @@ export class ModeManagerService {
               }
             }
 
-            window.addEventListener('message', event => {
-              const message = event.data;
-              switch (message.type) {
-                case 'updateMode':
-                  currentMode = message.mode;
-                  updateModeUI(message.mode);
-                  if (message.mode === 'vibe' && !animationFrame) {
-                    animateMatrix();
-                  } else if (message.mode === 'code') {
-                    cancelAnimationFrame(animationFrame);
-                    animationFrame = null;
-                  }
-                  break;
-                case 'updateStatus':
-                  const statusElement = document.getElementById(
-                    message.target === 'code-status' ? 'code-status' : 'vibe-status'
-                  );
-                  if (statusElement) {
-                    statusElement.textContent = message.text;
-                    if (message.target === 'code-status') {
-                      const isRecording = message.text === 'Recording...';
-                      const toggleBtn = document.getElementById('dictation-toggle');
-                      const successMsg = document.getElementById('success-message');
-                      if (toggleBtn) {
-                        toggleBtn.textContent = isRecording ? 'Stop Dictation' : 'Start Dictation';
-                      }
-                      if (isRecording && successMsg) {
-                        successMsg.classList.remove('visible');
-                      }
-                    }
-                  }
-                  break;
-                case 'updateTranscript':
-                  if (message.target === 'transcript') {
-                    document.getElementById('transcript').textContent = message.text;
-                  } else if (message.target === 'prompt-output') {
-                    const promptEl = document.getElementById('prompt-output');
-                    promptEl.textContent = message.text;
-                    promptEl.scrollTop = promptEl.scrollHeight;
-                  } else if (message.target === 'agent-transcript') {
-                    const agentEl = document.getElementById('agent-transcript');
-                    if (message.animate) {
-                      typeText(message.text, agentEl);
-                    } else {
-                      agentEl.textContent = message.text;
-                    }
-                  }
-                  break;
-                case 'appendTranscript':
-                  if (message.target === 'prompt-output') {
-                    const promptEl = document.getElementById('prompt-output');
-                    promptEl.textContent += message.text;
-                    promptEl.scrollTop = promptEl.scrollHeight;
-                  }
-                  break;
-                case 'showSuccess':
-                  document.getElementById('success-message').classList.add('visible');
-                  break;
-                case 'populatePrompts':
-                  populatePromptDropdown(message.prompts);
-                  break;
-                case 'setCurrentPrompt':
-                  document.getElementById('prompt-select').value = message.id;
-                  break;
-                case 'updateVisualizerState':
-                  currentState = message.state;
-                  if (currentMode === 'vibe' && !animationFrame) {
-                    animateMatrix();
-                  } else if (currentState === 'disabled') {
-                    cancelAnimationFrame(animationFrame);
-                    animationFrame = null;
-                  }
-                  break;
-              }
+            // Initialize audio context on first user interaction
+            document.addEventListener('click', () => {
+              if (!audioPlayer.initialized) audioPlayer.init();
             });
 
-            function updateModeUI(mode) {
-              document.querySelectorAll('.mode-button').forEach(btn => {
-                btn.classList.toggle('active', btn.textContent.toLowerCase() === mode);
-              });
-              const vibeOverlay = document.getElementById('vibe-overlay');
-              const codeOverlay = document.getElementById('code-overlay');
-              vibeOverlay.classList.toggle('inactive', mode !== 'vibe');
-              codeOverlay.classList.toggle('inactive', mode !== 'code');
+            // Switch between Vibe and Code modes
+            function switchMode(mode) {
+              vscode.postMessage({ type: 'switchMode', mode });
             }
 
-            function populatePromptDropdown(prompts) {
-              const select = document.getElementById('prompt-select');
-              select.innerHTML = '';
-              prompts.forEach(prompt => {
-                const option = document.createElement('option');
-                option.value = prompt.id;
-                option.textContent = prompt.name;
-                select.appendChild(option);
-              });
-              select.addEventListener('change', () => {
-                vscode.postMessage({ type: 'setPrompt', id: select.value });
-              });
+            // Toggle dictation in Code mode
+            function toggleDictation() {
+              vscode.postMessage({ type: 'toggleDictation' });
             }
-
-            // Typing animation
-            function typeText(text, element, speed = 5) {
-              let i = 0;
-              element.textContent = '';
-              let buffer = '';
-              
-              function type() {
-                if (i < text.length) {
-                  buffer += text.charAt(i);
-                  element.textContent = buffer;
-                  i++;
-                  requestAnimationFrame(type);
-                }
-              }
-              
-              requestAnimationFrame(type);
-            }
-
+            
             updateModeUI('${this.currentMode}');
           </script>
         </body>
@@ -625,10 +941,22 @@ export class ModeManagerService {
 
   private setupMessageHandling() {
     if (!this.panel) return
+    
     this.refreshPrompts()
     this.panel.webview.onDidReceiveMessage(async message => {
       console.log('Received message:', message)
       switch (message.type) {
+        case 'error':
+          // Handle error messages from the webview
+          console.error('Webview error:', message.message)
+          vscode.window.showErrorMessage(message.message)
+          break
+          
+        case 'audioEnded':
+          // Handle audio playback ended event
+          console.log('Audio playback ended')
+          break
+          
         case 'switchMode':
           await this.setMode(message.mode as Mode)
           break

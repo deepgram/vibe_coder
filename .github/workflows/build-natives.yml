@@ -79,6 +79,21 @@ jobs:
           name: prebuilds-${{ runner.os == 'Windows' && 'win32' || runner.os == 'macOS' && 'darwin' || 'linux' }}-${{ matrix.architecture || 'x64' }}
           path: prebuilds/${{ runner.os == 'Windows' && 'win32' || runner.os == 'macOS' && 'darwin' || 'linux' }}-${{ matrix.architecture || 'x64' }}
           
+      - name: Copy prebuilt binaries
+        run: |
+          mkdir -p prebuilds/win32-${{ matrix.architecture || 'x64' }}
+          mkdir -p prebuilds/darwin-${{ matrix.architecture || 'x64' }}
+          mkdir -p prebuilds/linux-${{ matrix.architecture || 'x64' }}
+          
+          # Windows
+          touch prebuilds/win32-${{ matrix.architecture || 'x64' }}/node-microphone.marker
+          
+          # macOS
+          touch prebuilds/darwin-${{ matrix.architecture || 'x64' }}/node-microphone.marker
+          
+          # Linux
+          touch prebuilds/linux-${{ matrix.architecture || 'x64' }}/node-microphone.marker
+          
   package:
     needs: build
     runs-on: ubuntu-latest

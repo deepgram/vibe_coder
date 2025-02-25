@@ -6,7 +6,7 @@ import { createClient } from '@deepgram/sdk'
 // import Microphone from 'node-microphone'
 // import Speaker from 'speaker'
 // Import our wrappers instead
-import { SpeakerWrapper, MicrophoneWrapper } from '../utils/native-module-wrapper'
+import { MicrophoneWrapper } from '../utils/native-module-wrapper'
 import { PromptManagementService } from './prompt-management-service'
 import { env, window, workspace } from 'vscode'
 import { LLMService } from './llm-service'
@@ -120,7 +120,6 @@ export class VoiceAgentService {
   private isInitialized = false
   private keepAliveInterval: NodeJS.Timeout | null = null
   private audioBuffers: Buffer[] = []
-  private audioPlayer: AudioPlayer | null = null
   private readonly AGENT_SAMPLE_RATE = 24000
   private promptManager: PromptManagementService
   private llmService: LLMService
@@ -339,7 +338,14 @@ export class VoiceAgentService {
               break
             case 'UserStartedSpeaking':
               console.log('User started speaking, stopping audio playback')
-              this.audioPlayer?.stop()
+              
+              // Send a message to the webview to stop all audio playback
+              if (this.agentPanel) {
+                this.agentPanel.postMessage({
+                  type: 'stopAudio'
+                });
+              }
+              
               this.sendSpeakingStateUpdate('idle')
               break
             case 'AgentStartedSpeaking':
@@ -378,9 +384,6 @@ export class VoiceAgentService {
         }
       }, 30000)
 
-      // Initialize audio player with correct sample rate
-      this.audioPlayer = new AudioPlayer(this.AGENT_SAMPLE_RATE)  // Match agent's rate
-
     } catch (error) {
       console.error('Failed to start agent:', error)
       this.cleanup() // Cleanup on error
@@ -411,6 +414,25 @@ export class VoiceAgentService {
   }
 
   private async playAudioResponse(audio: { data: string, encoding: string, sample_rate: number }) {
+    // Instead of playing audio through the native speaker, send it to the webview
+    if (!this.agentPanel) {
+      console.warn('No agent panel available for audio playback')
+      return
+    }
+
+    console.log('Sending audio data to webview for playback')
+    
+    // Send the audio data to the webview
+    this.agentPanel.postMessage({
+      type: 'playAudio',
+      audio: {
+        data: audio.data,
+        encoding: audio.encoding,
+        sampleRate: audio.sample_rate
+      }
+    })
+    
+    // Also update the transcript if available
     this.updateTranscript(audio.data)
   }
 
@@ -430,16 +452,6 @@ export class VoiceAgentService {
       clearInterval(this.keepAliveInterval)
       this.keepAliveInterval = null
     }
-
-    // Stop audio playback
-    if (this.audioPlayer) {
-      console.log('Stopping audio playback...')
-      this.audioPlayer.stop()
-      this.audioPlayer = null
-    }
-
-    // Clear any buffered audio
-    this.audioBuffers = []
 
     // Update UI status
     this.updateStatus('Disconnected')
@@ -548,18 +560,34 @@ export class VoiceAgentService {
     console.log('Received raw audio data, length:', data.length, 
       'sample rate:', this.AGENT_SAMPLE_RATE)
     
-    // Initialize audio player if needed
-    if (!this.audioPlayer) {
-      this.audioPlayer = new AudioPlayer(this.AGENT_SAMPLE_RATE)
-      this.audioPlayer.onPlaybackStarted(() => {
-        this.sendSpeakingStateUpdate('speaking')
-      })
-      this.audioPlayer.onPlaybackStopped(() => {
-        this.sendSpeakingStateUpdate('idle')
-      })
+    // Instead of using the native speaker, send the raw audio data to the webview
+    if (!this.agentPanel) {
+      console.warn('No agent panel available for audio playback')
+      return
     }
     
-    this.audioPlayer.play(data)
+    // Convert the raw PCM buffer to base64 for sending to the webview
+    const base64Audio = data.toString('base64')
+    
+    // Send the audio data to the webview with explicit sample rate info
+    this.agentPanel.postMessage({
+      type: 'playAudio',
+      audio: {
+        data: base64Audio,
+        encoding: 'linear16',
+        sampleRate: this.AGENT_SAMPLE_RATE,
+        isRaw: true
+      }
+    })
+    
+    // Update speaking state
+    this.sendSpeakingStateUpdate('speaking')
+    
+    // Set a timeout to update the speaking state back to idle
+    // This is a simple approach; a more sophisticated approach would track when playback ends
+    setTimeout(() => {
+      this.sendSpeakingStateUpdate('idle')
+    }, 1000) // Adjust timeout based on typical audio length
   }
 
   private async getAgentConfig(): Promise<AgentConfig> {
@@ -770,103 +798,5 @@ export class VoiceAgentService {
         resolve({ text: 'Error: WebSocket connection lost' })
       }
     })
-  }
-}
-
-// Replace the AudioPlayer class to use our wrapper
-class AudioPlayer {
-  private speaker: SpeakerWrapper
-  private bufferedAudio: Buffer[] = []
-  private targetSpeakerAudioMs = 400
-  private eventEmitter = new EventEmitter()
-
-  constructor(sampleRate: number) {
-    console.log('Initializing speaker with sample rate:', sampleRate)
-    // Use our wrapper instead of direct Speaker
-    this.speaker = new SpeakerWrapper({
-      channels: 1,       // Mono
-      bitDepth: 16,      // 16-bit PCM
-      sampleRate,        // Match agent's rate (24kHz)
-    })
-    setInterval(() => this.checkAndRefillSpeaker(), 200)
-  }
-
-  play(audio: Buffer) {
-    const wasEmpty = this.bufferedAudio.length === 0
-    this.bufferedAudio.push(audio)
-    if (wasEmpty) {
-      this.eventEmitter.emit('playbackStarted')
-    }
-    this.checkAndRefillSpeaker()
-  }
-
-  stop() {
-    this.bufferedAudio = []
-    this.eventEmitter.emit('playbackStopped')
-  }
-
-  onPlaybackStarted(callback: () => void) {
-    this.eventEmitter.on('playbackStarted', callback)
-  }
-
-  onPlaybackStopped(callback: () => void) {
-    this.eventEmitter.on('playbackStopped', callback)
-  }
-
-  private checkAndRefillSpeaker() {
-    const wasPlaying = this.bufferedAudio.length > 0
-    this.refillSpeaker()
-    // If we just ran out of audio, emit stopped event
-    if (wasPlaying && this.bufferedAudio.length === 0) {
-      this.eventEmitter.emit('playbackStopped')
-    }
-  }
-
-  private refillSpeaker() {
-    while (this.bufferedAudio.length && 
-           this.getBufferedMs() < this.targetSpeakerAudioMs) {
-      this.speaker.write(this.bufferedAudio.shift()!)
-    }
-  }
-  
-  private getBufferedMs(): number {
-    return 0; // TODO: Implement this based on speaker state
-  }
-}
-
-// Fix the SpeakerWrapper implementation
-class InternalSpeakerWrapper {
-  private speaker: any
-  private msPerSample: number
-  private lastWriteTime: number
-  private bufferedMsAtLastWrite: number
-
-  constructor(sampleRate: number) {
-    // We'll be using our imported SpeakerWrapper here
-    this.speaker = new SpeakerWrapper({
-      channels: 1,       // Mono
-      bitDepth: 16,      // 16-bit PCM
-      sampleRate,        // Match agent's rate (24kHz)
-    })
-    this.msPerSample = 1000 / sampleRate
-    this.lastWriteTime = Date.now()
-    this.bufferedMsAtLastWrite = 0
-  }
-
-  write(audio: Buffer) {
-    this.bufferedMsAtLastWrite = this.getBufferedMs() + 
-      this.getAudioDurationMs(audio)
-    this.lastWriteTime = Date.now()
-    return this.speaker.write(audio)
-  }
-
-  getBufferedMs(): number {
-    const msSinceLastWrite = Date.now() - this.lastWriteTime
-    return Math.max(this.bufferedMsAtLastWrite - msSinceLastWrite, 0)
-  }
-
-  private getAudioDurationMs(audio: Buffer): number {
-    const numSamples = audio.length / 2  // 16-bit = 2 bytes per sample
-    return this.msPerSample * numSamples
   }
 } 

@@ -29,9 +29,8 @@ const buildOptions = {
 	bundle: true,
 	outfile: 'dist/extension.js',
 	external: [
-		'vscode',
-		// Add native modules to external
-		'speaker'
+		'vscode'
+		// speaker has been removed as we're using browser audio APIs now
 	],
 	format: 'cjs',
 	platform: 'node',

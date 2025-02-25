@@ -6,41 +6,6 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 /**
- * A wrapper for the Speaker module that uses prebuilt binaries
- */
-export class SpeakerWrapper {
-  private speaker: any
-
-  constructor(options: any) {
-    try {
-      // Load the prebuilt Speaker module
-      const Speaker = loadNativeModule('speaker')
-      this.speaker = new Speaker(options)
-    } catch (error) {
-      console.error('Failed to initialize Speaker:', error)
-      vscode.window.showErrorMessage('Failed to initialize audio output. Voice playback may not work.')
-      // Create a dummy speaker to prevent crashes
-      this.speaker = {
-        write: (buffer: Buffer) => {
-          // Silent no-op if speaker fails to load
-          console.log(`Would play audio buffer of length ${buffer.length} (speaker not available)`)
-          return true
-        }
-      }
-    }
-  }
-
-  write(buffer: Buffer): boolean {
-    try {
-      return this.speaker.write(buffer)
-    } catch (error) {
-      console.error('Speaker write error:', error)
-      return false
-    }
-  }
-}
-
-/**
  * A wrapper for the node-microphone module
  * Note: node-microphone is not a native module but a JavaScript wrapper around command-line tools
  */

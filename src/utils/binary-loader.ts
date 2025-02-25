@@ -1,11 +1,11 @@
+import * as vscode from 'vscode'
 import * as os from 'os'
 import * as path from 'path'
 import * as fs from 'fs'
-import * as vscode from 'vscode'
 import * as cp from 'child_process'
 
-// The actual extension ID based on package.json
-const EXTENSION_ID = 'Deepgram.vibe-coder'
+// Update the extension ID to match your actual extension ID
+const EXTENSION_ID = 'deepgram.vibe-coder'
 
 /**
  * Loads a native module from pre-compiled binaries based on the current platform
@@ -16,73 +16,17 @@ export function loadNativeModule(moduleName: string) {
   const platform = os.platform()
   const arch = os.arch()
   
+  console.log(`loadNativeModule: Loading ${moduleName} for ${platform}-${arch}`)
+  
   // Special case for node-microphone which is not a native module
   if (moduleName === 'node-microphone') {
+    console.log('loadNativeModule: Using special loader for node-microphone')
     return loadNodeMicrophone()
   }
   
-  // Get the extension path to locate prebuilds directory
-  const extensionPath = vscode.extensions.getExtension(EXTENSION_ID)?.extensionPath
-  
-  if (!extensionPath) {
-    console.error(`Could not determine extension path for ${EXTENSION_ID}`)
-    // Try to find the extension directory by searching all extensions
-    const allExtensions = vscode.extensions.all
-    console.log(`Available extensions: ${allExtensions.map(ext => ext.id).join(', ')}`)
-    
-    // Try to use the current directory as fallback
-    const fallbackPath = path.resolve(__dirname, '..', '..')
-    console.log(`Using fallback path: ${fallbackPath}`)
-    
-    // Check if prebuilds directory exists in fallback path
-    const prebuildsPath = path.join(fallbackPath, 'prebuilds')
-    if (fs.existsSync(prebuildsPath)) {
-      console.log(`Found prebuilds directory at fallback path: ${prebuildsPath}`)
-      
-      // Path to the prebuilt module for the current platform
-      const prebuiltPath = path.join(prebuildsPath, `${platform}-${arch}`, `${moduleName}.node`)
-      
-      if (fs.existsSync(prebuiltPath)) {
-        console.log(`Found prebuilt module at fallback path: ${prebuiltPath}`)
-        try {
-          return require(prebuiltPath)
-        } catch (error) {
-          console.error(`Error loading prebuilt module from fallback path: ${error instanceof Error ? error.message : String(error)}`)
-        }
-      }
-    }
-    
-    throw new Error(`Could not determine extension path for ${EXTENSION_ID}. Available extensions: ${allExtensions.map(ext => ext.id).join(', ')}`)
-  }
-  
-  // Path to the prebuilt module for the current platform
-  const prebuiltPath = path.join(extensionPath, 'prebuilds', `${platform}-${arch}`, `${moduleName}.node`)
-  
-  // Log information for debugging
-  console.log(`Looking for native module at: ${prebuiltPath}`)
-  
-  if (fs.existsSync(prebuiltPath)) {
-    console.log(`Found prebuilt module for ${moduleName} (${platform}-${arch})`)
-    try {
-      // Load the native module from the prebuilt path
-      return require(prebuiltPath)
-    } catch (error) {
-      console.error(`Error loading prebuilt module: ${error instanceof Error ? error.message : String(error)}`)
-      throw new Error(`Failed to load prebuilt module ${moduleName} for ${platform}-${arch}`)
-    }
-  } else {
-    console.warn(`No prebuilt module found for ${moduleName} (${platform}-${arch})`)
-    
-    // Try to load via normal require as fallback (will likely fail if no compilation environment)
-    try {
-      console.log(`Attempting to load ${moduleName} via normal require as fallback`)
-      return require(moduleName)
-    } catch (error) {
-      const errorMessage = `Native module ${moduleName} is not available for your platform (${platform}-${arch}).`
-      console.error(errorMessage)
-      throw new Error(errorMessage)
-    }
-  }
+  // Note: Speaker module loading has been removed as part of the migration to browser-based audio playback
+  console.warn(`loadNativeModule: Native module ${moduleName} is not supported. Using browser-based audio playback instead.`)
+  throw new Error(`Native module ${moduleName} is not supported. Using browser-based audio playback instead.`)
 }
 
 /**
@@ -151,48 +95,57 @@ function loadNodeMicrophone() {
 }
 
 /**
- * Creates a dummy microphone implementation that will show appropriate errors
+ * Creates a dummy microphone implementation for when the command-line tool is not available
+ * @returns A dummy microphone implementation
  */
 function createDummyMicrophone() {
   const EventEmitter = require('events')
+  const platform = os.platform()
+  let commandName = ''
   
-  // This is a simplified version of the node-microphone API that will show errors
-  return class DummyMicrophone extends EventEmitter {
+  if (platform === 'darwin') {
+    commandName = 'rec'
+  } else if (platform === 'win32') {
+    commandName = 'sox'
+  } else {
+    commandName = 'arecord'
+  }
+  
+  return new class DummyMicrophone extends EventEmitter {
     constructor() {
       super()
-      console.warn('Using dummy microphone implementation - audio input will not work')
+      console.log('Initialized dummy microphone')
     }
     
     startRecording() {
+      console.log('Dummy microphone startRecording called')
       const stream = new EventEmitter()
-      
-      // Emit an error after a short delay
       setTimeout(() => {
-        const error = new Error('Microphone is not available on this platform')
+        const error = new Error(`Microphone requires the "${commandName}" command which is not installed`)
         this.emit('error', error)
         stream.emit('error', error)
       }, 500)
-      
       return stream
     }
     
     stopRecording() {
+      console.log('Dummy microphone stopRecording called')
       // No-op
     }
-  }
+  }()
 }
 
 /**
- * Creates a microphone implementation that uses the specified command
+ * Creates a microphone implementation using the specified command-line tool
+ * @param commandName The name of the command-line tool to use
+ * @returns A microphone implementation
  */
 function createMicrophoneImplementation(commandName: string) {
   const EventEmitter = require('events')
-  const spawn = cp.spawn
   
-  // This is a simplified version of the node-microphone implementation
-  return class MicrophoneImplementation extends EventEmitter {
+  return new class MicrophoneImplementation extends EventEmitter {
     private ps: cp.ChildProcess | null = null
-    private options: any
+    private options: any = {}
     
     constructor(options?: any) {
       super()
@@ -246,9 +199,8 @@ function createMicrophoneImplementation(commandName: string) {
         }
         
         try {
-          this.ps = spawn(commandName, audioOptions)
+          this.ps = cp.spawn(commandName, audioOptions)
           
-          // Add null checks before accessing properties
           if (this.ps) {
             this.ps.on('error', (error) => {
               this.emit('error', error)
@@ -275,7 +227,6 @@ function createMicrophoneImplementation(commandName: string) {
             }
           }
           
-          // If we couldn't set up the process properly, throw an error
           throw new Error(`Failed to start ${commandName} process`)
         } catch (error) {
           this.emit('error', error)
@@ -292,17 +243,21 @@ function createMicrophoneImplementation(commandName: string) {
         this.ps = null
       }
     }
-  }
+  }()
 }
 
 /**
- * Check if all required native modules are available for the current platform
- * @returns Object indicating compatibility status
+ * Checks if the required native modules are available for the current platform
+ * @returns An object indicating compatibility status
  */
 export function checkNativeModulesCompatibility() {
   const platform = os.platform()
   const arch = os.arch()
-  const requiredModules = ['speaker', 'node-microphone']
+  
+  // Define required modules
+  const requiredModules = ['node-microphone']
+  
+  // Initialize arrays for missing modules and warnings
   const missingModules: string[] = []
   const warnings: string[] = []
   
@@ -310,70 +265,68 @@ export function checkNativeModulesCompatibility() {
   const extensionPath = vscode.extensions.getExtension(EXTENSION_ID)?.extensionPath
   
   if (!extensionPath) {
-    console.error(`Could not determine extension path for ${EXTENSION_ID}`)
-    // Try to find the extension directory by searching all extensions
+    console.warn(`Could not determine extension path for ${EXTENSION_ID}`)
     const allExtensions = vscode.extensions.all
     console.log(`Available extensions: ${allExtensions.map(ext => ext.id).join(', ')}`)
-    
     return {
       compatible: false,
       platform,
       arch,
       missingModules: requiredModules,
+      warnings: [`Could not determine extension path for ${EXTENSION_ID}`],
       message: `Could not determine extension path for ${EXTENSION_ID}. Available extensions: ${allExtensions.map(ext => ext.id).join(', ')}`
     }
   }
   
-  // Check speaker module (native)
-  const speakerPath = path.join(extensionPath, 'prebuilds', `${platform}-${arch}`, 'speaker.node')
-  if (!fs.existsSync(speakerPath)) {
-    missingModules.push('speaker')
-  }
-  
-  // Check node-microphone (special case - it's a JS wrapper)
-  // We need to check if the required command-line tool is available
-  let microphoneAvailable = true
-  let commandName = ''
-  
+  // Check for node-microphone command-line tool
+  let microphoneCommandName = ''
   if (platform === 'darwin') {
-    commandName = 'rec'
+    microphoneCommandName = 'rec'
   } else if (platform === 'win32') {
-    commandName = 'sox'
+    microphoneCommandName = 'sox'
   } else {
-    commandName = 'arecord'
+    microphoneCommandName = 'arecord'
   }
   
   try {
     if (platform === 'win32') {
-      cp.execSync(`where ${commandName}`, { stdio: 'ignore' })
+      cp.execSync(`where ${microphoneCommandName}`, { stdio: 'ignore' })
     } else {
-      cp.execSync(`which ${commandName}`, { stdio: 'ignore' })
+      cp.execSync(`which ${microphoneCommandName}`, { stdio: 'ignore' })
     }
   } catch (e) {
-    microphoneAvailable = false
-    warnings.push(`The "${commandName}" command required by node-microphone is not available.`)
+    missingModules.push('node-microphone')
     
+    // Add platform-specific installation instructions
     if (platform === 'darwin') {
-      warnings.push('Install SoX on macOS: brew install sox')
+      warnings.push(`The "${microphoneCommandName}" command required by node-microphone is not available. Install SoX with: brew install sox`)
     } else if (platform === 'win32') {
-      warnings.push('Install SoX for Windows: https://sourceforge.net/projects/sox/')
+      warnings.push(`The "${microphoneCommandName}" command required by node-microphone is not available. Install SoX from: https://sourceforge.net/projects/sox/`)
     } else {
-      warnings.push('Install ALSA tools on Linux: sudo apt-get install alsa-utils')
+      warnings.push(`The "${microphoneCommandName}" command required by node-microphone is not available. Install ALSA tools with: sudo apt-get install alsa-utils`)
     }
   }
   
-  if (!microphoneAvailable) {
-    missingModules.push('node-microphone (command-line tool)')
+  // Determine overall compatibility
+  const compatible = missingModules.length === 0
+  
+  // Create a message summarizing the compatibility status
+  let message = ''
+  if (compatible) {
+    message = `All required modules are available for ${platform}-${arch}`
+  } else {
+    message = `Some required modules are missing for ${platform}-${arch}: ${missingModules.join(', ')}`
+    if (warnings.length > 0) {
+      message += `. ${warnings.join(' ')}`
+    }
   }
   
   return {
-    compatible: missingModules.length === 0,
+    compatible,
     platform,
     arch,
     missingModules,
     warnings,
-    message: missingModules.length > 0
-      ? `Missing components for your platform (${platform}-${arch}): ${missingModules.join(', ')}`
-      : 'All components are available for your platform'
+    message
   }
 } 
