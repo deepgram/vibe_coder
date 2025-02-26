@@ -68,8 +68,20 @@ export class ModeManagerService {
 
   async initialize(): Promise<void> {
     console.log('ModeManagerService initializing...')
-    await this.deepgramService.initialize()
-    await this.voiceAgentService.initialize()
+    try {
+      await this.deepgramService.initialize()
+    } catch (error) {
+      console.warn('Failed to initialize Deepgram service:', error)
+      // Continue initialization even if Deepgram fails
+    }
+    
+    try {
+      await this.voiceAgentService.initialize()
+    } catch (error) {
+      console.warn('Failed to initialize Voice Agent service:', error)
+      // Continue initialization even if Voice Agent fails
+    }
+    
     this.setupTranscriptListeners()
     this.isInitialized = true
     console.log('ModeManagerService initialized successfully')
@@ -606,49 +618,192 @@ export class ModeManagerService {
               border: 1px solid ${matrixGreen};
               border-radius: 4px;
               padding: 20px;
+              padding-bottom: 70px;
               position: relative;
-              height: 100%;
-              margin-top: 40px;
+              height: auto;
+              min-height: 150px;
+              max-height: 250px;
+              margin-top: 20px;
+              margin-bottom: 20px;
               overflow: hidden;
               display: flex;
               flex-direction: column;
+              transition: max-height 0.3s ease;
             }
+            
+            .prompt-container:hover {
+              max-height: 350px;
+            }
+            
             #prompt-output {
               color: ${matrixGreen};
               font-size: 13px;
               line-height: 1.5;
               white-space: pre-wrap;
-              flex: 1;
+              height: auto;
+              max-height: 100%;
               overflow-y: auto;
               padding-right: 10px;
+              scrollbar-width: thin;
+              scrollbar-color: ${matrixDarkGreen} ${matrixBlack};
+            }
+            
+            #prompt-output::-webkit-scrollbar {
+              width: 6px;
+            }
+            
+            #prompt-output::-webkit-scrollbar-track {
+              background: ${matrixBlack};
+            }
+            
+            #prompt-output::-webkit-scrollbar-thumb {
+              background-color: ${matrixDarkGreen};
+              border-radius: 3px;
             }
             .controls {
-              position: absolute;
-              top: 10px;
-              right: 0;
-              z-index: 100;
+              position: fixed;
+              bottom: 20px;
+              right: 20px;
+              z-index: 1000;
               display: flex;
               align-items: center;
               gap: 10px;
+              background: rgba(0, 0, 0, 0.7);
+              padding: 8px 12px;
+              border-radius: 6px;
+              backdrop-filter: blur(3px);
+              -webkit-backdrop-filter: blur(3px);
+              box-shadow: 0 0 15px rgba(0, 0, 0, 0.6);
             }
             #dictation-toggle {
+              background: linear-gradient(to bottom, ${matrixDarkGreen}, rgba(0, 20, 0, 0.8));
+              border: 1px solid ${matrixGreen};
+              color: ${matrixGreen};
+              padding: 10px 20px;
+              cursor: pointer;
+              font-size: 14px;
+              font-weight: bold;
+              text-transform: uppercase;
+              letter-spacing: 1.5px;
+              transition: all 0.3s ease;
+              border-radius: 4px;
+              box-shadow: 0 0 8px rgba(0, 255, 65, 0.2);
+              text-shadow: 0 0 5px rgba(0, 255, 65, 0.5);
+              margin-right: 10px;
+            }
+            
+            #dictation-toggle:hover {
+              background: linear-gradient(to bottom, rgba(0, 59, 0, 0.9), ${matrixDarkGreen});
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.4);
+              text-shadow: 0 0 8px rgba(0, 255, 65, 0.7);
+              transform: translateY(-1px);
+            }
+            
+            #dictation-toggle:active {
+              transform: translateY(1px);
+              box-shadow: 0 0 6px rgba(0, 255, 65, 0.3);
+            }
+            
+            .hotkey-hint {
+              color: ${matrixGreen};
+              opacity: 0.7;
+              font-size: 12px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+              margin-right: 15px;
+            }
+            .icon-button {
+              background: rgba(0, 20, 0, 0.6);
+              border: 1px solid ${matrixGreen};
+              color: ${matrixGreen};
+              padding: 10px;
+              cursor: pointer;
+              font-size: 16px;
+              transition: all 0.3s ease;
+              border-radius: 4px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 38px;
+              height: 38px;
+              box-shadow: 0 0 6px rgba(0, 255, 65, 0.15);
+            }
+            .settings-modal {
+              display: none;
+              position: fixed;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              background: rgba(0, 0, 0, 0.8);
+              z-index: 2000;
+              justify-content: center;
+              align-items: center;
+            }
+            .settings-modal.visible {
+              display: flex;
+            }
+            .modal-content {
+              background: ${matrixBlack};
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              padding: 20px;
+              width: 80%;
+              max-width: 500px;
+              max-height: 80vh;
+              overflow-y: auto;
+            }
+            .modal-header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 20px;
+              border-bottom: 1px solid ${matrixDarkGreen};
+              padding-bottom: 10px;
+            }
+            .modal-title {
+              color: ${matrixGreen};
+              font-size: 18px;
+              text-transform: uppercase;
+              letter-spacing: 1px;
+            }
+            .close-button {
+              background: transparent;
+              border: none;
+              color: ${matrixGreen};
+              font-size: 20px;
+              cursor: pointer;
+            }
+            .api-key-section {
+              margin-bottom: 20px;
+            }
+            .api-key-input {
+              display: flex;
+              align-items: center;
+              gap: 10px;
+              margin-top: 10px;
+            }
+            .api-key-input input {
+              flex: 1;
+              background: ${matrixBlack};
+              color: ${matrixGreen};
+              border: 1px solid ${matrixGreen};
+              border-radius: 4px;
+              padding: 8px;
+            }
+            .api-key-input button {
               background: transparent;
               border: 1px solid ${matrixGreen};
               color: ${matrixGreen};
-              padding: 8px 16px;
+              padding: 8px;
               cursor: pointer;
               font-size: 12px;
               text-transform: uppercase;
               letter-spacing: 1px;
-              transition: all 0.3s ease;
               border-radius: 4px;
             }
-            .hotkey-hint {
-              color: ${matrixGreen};
-              opacity: 0.9;
-              font-size: 12px;
-              text-transform: uppercase;
-              letter-spacing: 1px;
+            .api-key-input button:hover {
+              box-shadow: 0 0 12px rgba(0, 255, 65, 0.3);
             }
             .prompt-selection {
               margin: 20px 0 22px 0;
@@ -715,8 +870,34 @@ export class ModeManagerService {
               <div class="controls">
                 <button id="dictation-toggle" onclick="toggleDictation()">Start Dictation</button>
                 <span class="hotkey-hint">[⌘⇧D]</span>
+                <button id="settings-button" class="icon-button" onclick="openSettings()">⚙️</button>
               </div>
               <div class="section-overlay" id="code-overlay"></div>
+            </div>
+          </div>
+
+          <div class="settings-modal" id="settings-modal">
+            <div class="modal-content">
+              <div class="modal-header">
+                <div class="modal-title">API Key Management</div>
+                <button class="close-button" onclick="closeSettings()">×</button>
+              </div>
+              <div class="api-key-section">
+                <div class="container-label">Deepgram API Key</div>
+                <div class="api-key-input">
+                  <input type="password" id="deepgram-key" placeholder="Enter Deepgram API key">
+                  <button onclick="saveApiKey('deepgram')">Save</button>
+                  <button onclick="clearApiKey('deepgram')">Clear</button>
+                </div>
+              </div>
+              <div class="api-key-section">
+                <div class="container-label">OpenAI API Key</div>
+                <div class="api-key-input">
+                  <input type="password" id="openai-key" placeholder="Enter OpenAI API key">
+                  <button onclick="saveApiKey('openai')">Save</button>
+                  <button onclick="clearApiKey('openai')">Clear</button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -825,6 +1006,18 @@ export class ModeManagerService {
                 case 'setCurrentPrompt':
                   document.getElementById('prompt-select').value = message.id;
                   break;
+                case 'apiKeyStatus':
+                  if (message.hasDeepgramKey) {
+                    document.getElementById('deepgram-key').placeholder = '••••••••••••••••••••••';
+                  } else {
+                    document.getElementById('deepgram-key').placeholder = 'No API key set';
+                  }
+                  if (message.hasOpenAIKey) {
+                    document.getElementById('openai-key').placeholder = '••••••••••••••••••••••';
+                  } else {
+                    document.getElementById('openai-key').placeholder = 'No API key set';
+                  }
+                  break;
               }
             });
 
@@ -932,6 +1125,36 @@ export class ModeManagerService {
               vscode.postMessage({ type: 'toggleDictation' });
             }
             
+            function openSettings() {
+              document.getElementById('settings-modal').classList.add('visible');
+              // Request current API key status
+              vscode.postMessage({ type: 'getApiKeyStatus' });
+            }
+
+            function closeSettings() {
+              document.getElementById('settings-modal').classList.remove('visible');
+            }
+
+            function saveApiKey(service) {
+              const inputId = service === 'deepgram' ? 'deepgram-key' : 'openai-key';
+              const key = document.getElementById(inputId).value.trim();
+              if (key) {
+                vscode.postMessage({ 
+                  type: 'saveApiKey', 
+                  service, 
+                  key 
+                });
+                document.getElementById(inputId).value = '';
+              }
+            }
+
+            function clearApiKey(service) {
+              vscode.postMessage({ 
+                type: 'clearApiKey', 
+                service 
+              });
+            }
+
             updateModeUI('${this.currentMode}');
           </script>
         </body>
@@ -966,6 +1189,42 @@ export class ModeManagerService {
         case 'setPrompt':
           await this.promptManager.setCurrentPrompt(message.id)
           this.refreshPrompts()
+          break
+        
+        case 'getApiKeyStatus':
+          const hasDeepgramKey = !!(await this.context.secrets.get('deepgram.apiKey'))
+          const hasOpenAIKey = !!(await this.context.secrets.get('openai.apiKey'))
+          this.panel?.webview.postMessage({ 
+            type: 'apiKeyStatus', 
+            hasDeepgramKey,
+            hasOpenAIKey
+          })
+          break
+          
+        case 'saveApiKey':
+          if (message.service === 'deepgram') {
+            await this.context.secrets.store('deepgram.apiKey', message.key)
+            vscode.window.showInformationMessage('Deepgram API key saved')
+            // Reinitialize the service with the new key
+            try {
+              this.deepgramService.updateApiKey(message.key)
+            } catch (error) {
+              console.error('Failed to update Deepgram API key:', error)
+            }
+          } else if (message.service === 'openai') {
+            await this.context.secrets.store('openai.apiKey', message.key)
+            vscode.window.showInformationMessage('OpenAI API key saved')
+          }
+          break
+          
+        case 'clearApiKey':
+          if (message.service === 'deepgram') {
+            await this.context.secrets.delete('deepgram.apiKey')
+            vscode.window.showInformationMessage('Deepgram API key cleared')
+          } else if (message.service === 'openai') {
+            await this.context.secrets.delete('openai.apiKey')
+            vscode.window.showInformationMessage('OpenAI API key cleared')
+          }
           break
       }
     })

@@ -139,4 +139,11 @@ export class DictationService {
     this.eventEmitter.on('transcript', callback)
     return () => this.eventEmitter.off('transcript', callback)
   }
+
+  /**
+   * Update the Deepgram client instance
+   */
+  updateClient(client: ReturnType<typeof createClient>): void {
+    this.deepgramClient = client
+  }
 } 

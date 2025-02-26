@@ -79,6 +79,13 @@ export class LLMService implements ILLMService {
   async streamProcessText(params: StreamProcessParams): Promise<StreamResponse> {
     try {
       const apiKey = await this.getApiKey()
+      if (!apiKey) {
+        return { 
+          text: '',
+          error: 'OpenAI API key is required. Please add it in settings.'
+        }
+      }
+      
       this.client.updateApiKey(apiKey)
 
       const messages = [
@@ -154,6 +161,12 @@ export class LLMService implements ILLMService {
   }): Promise<LLMResponse> {
     try {
       const apiKey = await this.getApiKey()
+      if (!apiKey) {
+        return { 
+          text: text,
+          error: 'OpenAI API key is required. Please add it in settings.'
+        }
+      }
       
       // Update client config with API key
       if (this.client instanceof OpenAIClient) {
@@ -178,7 +191,7 @@ export class LLMService implements ILLMService {
     }
   }
 
-  private async getApiKey(): Promise<string> {
+  private async getApiKey(): Promise<string | null> {
     const apiKey = await this.context.secrets.get('openai.apiKey')
     if (!apiKey) {
       const key = await vscode.window.showInputBox({
@@ -192,7 +205,7 @@ export class LLMService implements ILLMService {
           return null
         }
       })
-      if (!key) throw new Error('OpenAI API key is required')
+      if (!key) return null // User cancelled
       await this.context.secrets.store('openai.apiKey', key)
       return key
     }

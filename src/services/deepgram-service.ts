@@ -35,19 +35,27 @@ export class DeepgramService {
   async initialize(): Promise<void> {
     console.log('DeepgramService initializing...')
     const apiKey = await this.context.secrets.get('deepgram.apiKey')
-    if (!apiKey) {
-      const key = await vscode.window.showInputBox({
-        prompt: 'Enter your Deepgram API key',
-        password: true
-      })
-      if (!key) throw new Error('Deepgram API key is required')
-      await this.context.secrets.store('deepgram.apiKey', key)
-    }
-
+    
+    // Initialize with empty key if not available, but mark as not fully initialized
     this.client = createClient(apiKey || '')
     this.dictationService = new DictationService(this.client, this.context)
+    
+    // Only mark as fully initialized if we have an API key
+    this.isInitialized = !!apiKey
+    console.log('DeepgramService initialized successfully, API key available:', !!apiKey)
+  }
+
+  /**
+   * Update the API key and reinitialize the client
+   */
+  updateApiKey(apiKey: string): void {
+    this.client = createClient(apiKey)
+    if (this.dictationService) {
+      this.dictationService.updateClient(this.client)
+    } else {
+      this.dictationService = new DictationService(this.client, this.context)
+    }
     this.isInitialized = true
-    console.log('DeepgramService initialized successfully')
   }
 
   async startAgent(): Promise<void> {
@@ -55,11 +63,28 @@ export class DeepgramService {
   }
 
   async startDictation(): Promise<void> {
-    if (!this.isInitialized)
-      throw new Error('Deepgram service not initialized')
-
     if (!this.dictationService)
       throw new Error('Dictation service not initialized')
+
+    if (!this.isInitialized) {
+      const apiKey = await this.context.secrets.get('deepgram.apiKey')
+      if (!apiKey) {
+        const key = await vscode.window.showInputBox({
+          prompt: 'Enter your Deepgram API key',
+          password: true,
+          placeHolder: 'Deepgram API key is required for dictation',
+          ignoreFocusOut: true
+        })
+        if (!key) {
+          vscode.window.showErrorMessage('Deepgram API key is required for dictation')
+          throw new Error('Deepgram API key is required')
+        }
+        await this.context.secrets.store('deepgram.apiKey', key)
+        this.updateApiKey(key)
+      } else {
+        this.updateApiKey(apiKey)
+      }
+    }
 
     await this.dictationService.startDictation()
   }

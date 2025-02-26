@@ -190,16 +190,9 @@ export class VoiceAgentService {
       console.warn('Native module compatibility check failed:', compatibility)
     }
 
+    // Check for API key but don't require it for initialization
     const apiKey = await this.context.secrets.get('deepgram.apiKey')
-    if (!apiKey) {
-      const key = await vscode.window.showInputBox({
-        prompt: 'Enter your Deepgram API key',
-        password: true
-      })
-      if (!key) throw new Error('Deepgram API key is required')
-      await this.context.secrets.store('deepgram.apiKey', key)
-    }
-
+    // We'll mark as initialized even without an API key
     this.isInitialized = true
   }
 
@@ -214,13 +207,26 @@ export class VoiceAgentService {
       this.updateStatus('Connecting to agent...')
 
       const apiKey = await this.context.secrets.get('deepgram.apiKey')
-      if (!apiKey) throw new Error('Deepgram API key is required')
+      if (!apiKey) {
+        const key = await vscode.window.showInputBox({
+          prompt: 'Enter your Deepgram API key',
+          password: true,
+          placeHolder: 'Deepgram API key is required for voice agent',
+          ignoreFocusOut: true
+        })
+        if (!key) {
+          this.updateStatus('API key required')
+          vscode.window.showErrorMessage('Deepgram API key is required for voice agent')
+          throw new Error('Deepgram API key is required')
+        }
+        await this.context.secrets.store('deepgram.apiKey', key)
+      }
 
       this.ws = new WebSocket('wss://agent.deepgram.com/agent', 
         ['token'],
         {
           headers: {
-            'Authorization': `Token ${apiKey}`
+            'Authorization': `Token ${apiKey || ''}`
           }
         }
       )
