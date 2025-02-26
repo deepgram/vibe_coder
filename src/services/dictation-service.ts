@@ -15,7 +15,7 @@ export class DictationService {
   private eventEmitter = new EventEmitter()
 
   constructor(
-    private deepgramClient: ReturnType<typeof createClient>,
+    private deepgramClient: ReturnType<typeof createClient> | null,
     private context: vscode.ExtensionContext
   ) {
     this.state = {
@@ -34,6 +34,10 @@ export class DictationService {
       console.log('Dictation already active, stopping first...')
       await this.stopDictation()
       console.log('Previous dictation stopped')
+    }
+
+    if (!this.deepgramClient) {
+      throw new Error('Deepgram client not initialized. Please provide an API key.')
     }
 
     try {
@@ -69,7 +73,7 @@ export class DictationService {
       connection.on(LiveTranscriptionEvents.Error, (error) => {
         console.error('Deepgram connection error:', error)
         console.error('Connection state:', {
-          isConnected: connection.isConnected(),
+          isConnected: connection?.isConnected(),
           error: error
         })
       })
@@ -89,7 +93,7 @@ export class DictationService {
       })
 
       audioStream.on('data', (chunk: Buffer) => {
-        if (connection.isConnected()) {
+        if (connection?.isConnected()) {
           connection.send(chunk)
         } else {
           console.log('Connection not ready, chunk dropped')
@@ -136,8 +140,16 @@ export class DictationService {
   }
 
   onTranscript(callback: (text: string, isFinal: boolean) => void) {
+    if (!this.deepgramClient) {
+      console.warn('Cannot set up transcript listener: Deepgram client not initialized')
+      // Return a no-op function
+      return () => {}
+    }
+    
     this.eventEmitter.on('transcript', callback)
-    return () => this.eventEmitter.off('transcript', callback)
+    return () => {
+      this.eventEmitter.removeListener('transcript', callback)
+    }
   }
 
   /**
