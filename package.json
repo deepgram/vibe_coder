@@ -54,6 +54,10 @@
         "title": "Vibe Coder: Manage Dictation Prompts"
       },
       {
+        "command": "vibe-coder.configureDeepgramApiKey",
+        "title": "Vibe Coder: Configure Deepgram API Key"
+      },
+      {
         "command": "vibeCoder.listMicrophoneDevices",
         "title": "Vibe-Coder: List Available Microphone Devices"
       },

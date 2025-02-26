@@ -76,18 +76,17 @@ export class DeepgramService {
     // Check for API key and prompt if needed
     const apiKey = await this.context.secrets.get('deepgram.apiKey')
     if (!apiKey) {
-      const key = await vscode.window.showInputBox({
-        prompt: 'Enter your Deepgram API key',
-        password: true,
-        placeHolder: 'Deepgram API key is required for dictation',
-        ignoreFocusOut: true
-      })
-      if (!key) {
-        vscode.window.showErrorMessage('Deepgram API key is required for dictation')
-        throw new Error('Deepgram API key is required')
+      // Show a message with a button to open the command
+      const action = await vscode.window.showErrorMessage(
+        'Deepgram API key is required for dictation',
+        'Configure API Key'
+      )
+      
+      if (action === 'Configure API Key') {
+        await vscode.commands.executeCommand('vibe-coder.configureDeepgramApiKey')
       }
-      await this.context.secrets.store('deepgram.apiKey', key)
-      this.updateApiKey(key)
+      
+      throw new Error('Deepgram API key is required')
     } else if (!this.isInitialized) {
       // If we have a key but aren't initialized, update the key
       this.updateApiKey(apiKey)

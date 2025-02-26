@@ -30,6 +30,38 @@ interface PromptSelectItem extends vscode.QuickPickItem {
 export async function activate(context: vscode.ExtensionContext) {
 	console.log('Activating Vibe Coder extension...')
 	
+	// Register the API key command first, before any initialization
+	context.subscriptions.push(
+		vscode.commands.registerCommand('vibe-coder.configureDeepgramApiKey', async () => {
+			try {
+				const key = await vscode.window.showInputBox({
+					prompt: 'Enter your Deepgram API key',
+					password: true,
+					placeHolder: 'Deepgram API key is required for voice features',
+					ignoreFocusOut: true
+				})
+				
+				if (key) {
+					await context.secrets.store('deepgram.apiKey', key)
+					vscode.window.showInformationMessage('Deepgram API key saved successfully')
+					
+					// Reload the window to apply the new API key
+					const reload = await vscode.window.showInformationMessage(
+						'API key saved. Reload window to apply changes?',
+						'Reload Window'
+					)
+					
+					if (reload === 'Reload Window') {
+						await vscode.commands.executeCommand('workbench.action.reloadWindow')
+					}
+				}
+			} catch (error) {
+				console.error('Failed to save API key:', error)
+				vscode.window.showErrorMessage('Failed to save API key: ' + (error as Error).message)
+			}
+		})
+	)
+	
 	const modeManager = new ModeManagerService(context)
 	
 	try {
@@ -38,7 +70,13 @@ export async function activate(context: vscode.ExtensionContext) {
 		console.log('Mode manager initialized successfully')
 	} catch (error) {
 		console.error('Failed to initialize services:', error)
-		vscode.window.showErrorMessage('Failed to initialize Vibe Coder: ' + (error as Error).message)
+		vscode.window.showErrorMessage(
+			'Failed to initialize Vibe Coder: ' + (error as Error).message + 
+			'. Please set your Deepgram API key using the "Configure Deepgram API Key" command.'
+		)
+		
+		// Show the command palette with our command pre-filled
+		vscode.commands.executeCommand('workbench.action.quickOpen', '>Configure Deepgram API Key')
 		return
 	}
 

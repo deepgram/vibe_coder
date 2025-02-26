@@ -1,17 +1,54 @@
 # Vibe-Coder
 
-A voice-powered coding assistant for VS Code that helps you navigate, control, and code through natural voice commands.
+A voice-powered coding assistant for AI-enabled VS Code forks that helps you navigate, control, and code through natural voice commands. This is a first cut at Deepgram's vision of the future. It is a very early view, an experiment in Voice first programming. As such, there will be bugs, future developments. We'd love to hear your ideas on how you're using it and how to make it better. 
+
+## Getting Started
+
+1. Install the extension
+2. Press cmd/ctrl+shift+V to open the extension
+3. Enter Deepgram API key if needed
+4. Choose to either Vibe or Code!
 
 ## Features
 
-- Voice-controlled coding assistant
-- Deepgram AI-powered voice recognition
-- Execute VS Code commands by voice
-- Generate project specifications from your conversation
-- Navigate file structure and open files
-- Get coding assistance through natural conversation
+###Vibe Mode 
+- Integrated with Deepgram's Voice Agent API
+- Brainstorm new ideas, validate opinions, get in the flow
+- Ask it to generate a product spec at the end of your conversation to guide your development work
+
+###Code Mode
+- Voice dication with customizable AI rewrite prompts
+- Generate a prompt for any scenario: Typo Corrections, Debugging, Language/Project Specific
+- The rewrite gets automatically copied to your clipboard, which you can then paste anywhere you want
+- This is particularly suited for vibe-coding with AI IDE's such as Cursor or Windsurf, with a separate AI chat panel
+- Start and stop dication with Cmd/Ctrl+shift+D. Stopping the dictation triggers the rewrite
+
+##Future Improvements 
+
+In no particular order:
+- Add/improve VS Code command recognition in Vibe mode
+- Add additional function calling capability in Vibe mode
+- Bug quashing
+- Implement Microphone settings in the webview panel menu
+- Explore accessibility controls on each platform to allow automatic pasting of transcripts into AI chat panel
+- Give the Vibe mode agent full context of your project
+- Add memory to the Vibe mode agent
+- Add MCP capability to the Vibe mode agent
+
 
 ## Setup
+
+##### API Keys
+
+You will need a Deepgram API key and an OpenAI API key. 
+
+For Deepgram: 
+1. Sign up at [Deepgram](https://console.deepgram.com/signup)
+2. Create a new project
+3. Generate an API key with the appropriate permissions
+4. When you first start Vibe-Coder, you'll be prompted to enter your API key
+Note: new signups will get $200 in free credit automatically. If you burn through that while vibe coding, let us know so we can arrange more credits!
+
 
 ### 1. Install Required Dependencies
 
@@ -70,7 +107,9 @@ For other Linux distributions, use the appropriate package manager.
 4. Select "Install from VSIX..."
 5. Choose the downloaded .vsix file
 
-### 3. Configure Microphone Settings
+### 3. Configure Microphone Settings 
+
+(Note: the Microphone settings in the settings menu is a placeholder for now)
 
 1. Test your microphone:
    - Open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P on macOS)
@@ -93,16 +132,7 @@ For other Linux distributions, use the appropriate package manager.
 - **Windows**: Use "default" or a numeric index (0, 1, 2) from the device list
 - **Linux**: Common formats are "default", "plughw:0,0" (first card, first device), or "plughw:1,0" (second card, first device)
 
-### 4. Set Up Deepgram API Key
-
-1. Sign up at [Deepgram](https://console.deepgram.com/signup)
-2. Create a new project
-3. Generate an API key with the appropriate permissions
-4. When you first start Vibe-Coder, you'll be prompted to enter your API key
-   - Alternatively, open the Command Palette and run "Vibe-Coder: Start Voice Agent"
-   - Enter your Deepgram API key when prompted
-
-### 5. Verify Setup
+### 4. Verify Setup
 
 1. Open the Command Palette (Ctrl+Shift+P or Cmd+Shift+P on macOS)
 2. Run "Vibe-Coder: Start Voice Agent"
@@ -152,27 +182,13 @@ The extension includes pre-compiled binaries for the following platforms:
 
 If your platform is not listed, the extension will try to compile the native modules automatically, which requires additional development tools. See the Troubleshooting section for more information.
 
-## Getting Started
-
-1. Install the extension
-2. Open the command palette (Ctrl+Shift+P or Cmd+Shift+P on macOS)
-3. Run the command "Vibe-Coder: Start Voice Agent"
-4. When prompted, enter your Deepgram API key
-5. Start talking to the assistant!
-
-### Obtaining a Deepgram API Key
-
-1. Sign up at [Deepgram](https://console.deepgram.com/signup)
-2. Create a new project
-3. Generate an API key with the appropriate permissions
-4. Copy the API key for use in Vibe-Coder
 
 ## Voice Commands
 
 Here are some example commands you can use:
 
 - "Open the file index.js"
-- "Create a new file called utils.js"
+- "Create a new file"
 - "Show me the explorer view"
 - "Generate a project specification"
 - "Tell me about this codebase"
@@ -241,3 +257,7 @@ Vibe-Coder sends audio data to Deepgram for processing. Your conversations are p
 ## License
 
 [MIT License](LICENSE)
+
+## Contributing
+
+We welcome contributions to Vibe Coder! If you're interested in helping improve this extension, please check out our [contribution guidelines](CONTRIBUTING.md) for information on how to get started, report issues, and submit pull requests.
