@@ -147,5 +147,6 @@
     "out/**/*",
     "prebuilds/**/*",
     "README.md"
-  ]
+  ],
+  "icon": "vibe-coder-logo.png"
 }
