@@ -546,6 +546,18 @@ export class ModeManagerService {
               color: ${matrixGreen};
               margin-bottom: 10px;
             }
+            .headphones-notice {
+              z-index: 1;
+              color: ${matrixGreen};
+              font-size: 12px;
+              background: rgba(0, 59, 0, 0.5);
+              padding: 6px 12px;
+              border-radius: 4px;
+              margin-top: 10px;
+              border: 1px solid ${matrixDarkGreen};
+              text-align: center;
+              max-width: 90%;
+            }
             .transcription-container {
               background: rgba(0, 59, 0, 0.3);
               border: 1px solid ${matrixGreen};
@@ -1023,6 +1035,9 @@ export class ModeManagerService {
               </div>
               <canvas class="matrix-canvas" id="matrix-canvas"></canvas>
               <div id="agent-transcript" class="terminal-text"></div>
+              <div class="headphones-notice">
+                Headphones recommended: echo cancellation not yet implemented
+              </div>
               <div class="section-overlay" id="vibe-overlay"></div>
             </div>
             

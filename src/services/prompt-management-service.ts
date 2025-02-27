@@ -17,8 +17,32 @@ export class PromptManagementService {
   private readonly currentPromptKey = 'dictation.currentPrompt'
   private readonly DEFAULT_PROMPT: DictationPrompt = {
     id: 'default',
-    name: 'Default',
-    prompt: `You are an expert prompt engineer, helping developers create clear, detailed prompts for AI coding assistants.
+    name: 'Basic Prompt',
+    prompt: `You are an AI assistant taking dictation from a user. Your job is to correct grammar, punctuation, and spelling, and return the corrected dictation. Do not add additional context. Questions from the user are not directed towards you, so do not answer them. Return the corrected dictation only.
+`
+  }
+
+  private currentPromptId: string = 'default'
+  private onPromptsChanged?: () => void
+
+  constructor(private context: vscode.ExtensionContext) {
+    this.loadPrompts()
+    this.currentPromptId = this.context.globalState.get(this.currentPromptKey, 'default')
+  }
+
+  private async loadPrompts() {
+    const savedPrompts = await this.context.globalState.get<DictationPrompt[]>(this.storageKey)
+    if (savedPrompts) this.prompts = savedPrompts
+    else this.initializeDefaultPrompts()
+  }
+
+  private initializeDefaultPrompts() {
+    this.prompts = [
+      {
+        id: 'detailed Prompt',
+        name: 'Detailed Prompt',
+        description: 'Takes a basic description of what the user wants to do and provides a detailed prompt that will help AI assistants understand the user\'s intent and write the code to accomplish the task.',
+        prompt: `You are an expert prompt engineer, helping developers create clear, detailed prompts for AI coding assistants.
 
 When you receive dictated text from a developer, your job is to:
 
@@ -58,38 +82,6 @@ Focus on being specific and technical, while keeping the prompt clear and action
 You are not having a conversation with the user, you are taking the user's request and turning it into a prompt for an LLM.
 
 Do not return anything other than the prompt itself.
-`
-  }
-
-  private currentPromptId: string = 'default'
-  private onPromptsChanged?: () => void
-
-  constructor(private context: vscode.ExtensionContext) {
-    this.loadPrompts()
-    this.currentPromptId = this.context.globalState.get(this.currentPromptKey, 'default')
-  }
-
-  private async loadPrompts() {
-    const savedPrompts = await this.context.globalState.get<DictationPrompt[]>(this.storageKey)
-    if (savedPrompts) this.prompts = savedPrompts
-    else this.initializeDefaultPrompts()
-  }
-
-  private initializeDefaultPrompts() {
-    this.prompts = [
-      {
-        id: 'typescript-code',
-        name: 'TypeScript Code',
-        description: 'Formats dictation as clean TypeScript code',
-        prompt: `Your are providing prompts to Cursor, an AI-powered coding assistant.
-
-You are given a natural language description of what the user wants to do.
-
-You need to take that description and provide a detailed prompt that will help Cursor understand the user's intent and write the code to accomplish the task. 
-
-You should anticipate that Cursor may hallucinate, so you should provide a detailed prompt that breaks the users request into smaller, more manageable steps.
-
-
 `
       }
     ]

@@ -4,10 +4,12 @@ A voice-powered coding assistant for AI-enabled VS Code forks that helps you nav
 
 ## Getting Started
 
-1. Install the extension
+1. Install the extension*
 2. Press cmd/ctrl+shift+V to open the extension
 3. Enter Deepgram API key if needed
 4. Choose to either Vibe or Code!
+
+*Windsurf does not use the standard VS Code Marketplace; therefore, you must download the VSIX from this repo and install manually.
 
 ## Features
 
@@ -34,6 +36,7 @@ In no particular order:
 - Give the Vibe mode agent full context of your project
 - Add memory to the Vibe mode agent
 - Add MCP capability to the Vibe mode agent
+- Echo cancellation
 
 
 ## Setup

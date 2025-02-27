@@ -121,7 +121,22 @@ export async function activate(context: vscode.ExtensionContext) {
 			vscode.window.showInformationMessage('Vibe Coder test command works!')
 		}),
 
-		vscode.commands.registerCommand('vibe-coder.managePrompts', async () => {
+		vscode.commands.registerCommand('vibe-coder.start', async () => {
+			try {
+				await modeManager.initialize()
+				modeManager.show()
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to start Vibe Coder: ${error}`)
+			}
+		}),
+
+		vscode.commands.registerCommand('vibe-coder.clearPromptState', async () => {
+			await context.globalState.update('dictation.prompts', undefined);
+			await context.globalState.update('dictation.currentPrompt', undefined);
+			vscode.window.showInformationMessage('Prompt state cleared. Please reload the window.');
+		}),
+
+		vscode.commands.registerCommand('vibe-coder.managePrompts', async (options?: { action: string, id?: string }) => {
 			const items: PromptQuickPickItem[] = [
 				{ label: '$(add) Create New Prompt', id: 'new' },
 				{ label: '$(list-selection) Select Active Prompt', id: 'select' },
